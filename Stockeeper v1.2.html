@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stockeeper v1.3 (移動端卡片優化版)</title>
+    <!-- Chart.js 核心 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Chart.js 數據標籤插件 (用於圓餅圖顯示 %) -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <style>
+        :root {
+            --bg: #f0f2f5;
+            --card-bg: #ffffff;
+            --primary: #1890ff;
+            --success: #52c41a;
+            --danger: #f5222d;
+            --warning: #faad14;
+            --text: #333;
+            --border: #e8e8e8;
+            --hover: #f5f5f5;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 20px; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+        
+        /* 卡片樣式 */
+        .card { background: var(--card-bg); padding: 24px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+        h2, h3 { margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; font-size: 1.1rem; color: #1f1f1f; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* 顏色工具 */
+        .text-up { color: var(--success); font-weight: bold; }
+        .text-down { color: var(--danger); font-weight: bold; }
+        .text-neutral { color: #666; }
+        .small-text { font-size: 0.85rem; color: #8c8c8c; font-weight: normal; }
+        
+        /* KPI 儀表板 */
+        .dashboard-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .kpi-box { background: #fafafa; padding: 15px; border-radius: 6px; text-align: center; border: 1px solid var(--border); }
+        .kpi-title { font-size: 0.9rem; color: #666; margin-bottom: 8px; }
+        .kpi-val { font-size: 1.4rem; font-weight: bold; color: #000; }
+
+        /* 表格樣式 (電腦版預設) */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; table-layout: fixed; }
+        th { text-align: left; padding: 12px 8px; background: #fafafa; border-bottom: 2px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+        th:hover { background: #e6f7ff; }
+        td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+        
+        /* 可展開的詳細行 */
+        .clickable-row { cursor: pointer; transition: 0.2s; }
+        .clickable-row:hover { background: var(--hover); }
+        .detail-row { background-color: #f9f9f9; display: none; }
+        .detail-content { padding: 15px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; font-size: 0.85rem; color: #555; }
+        .detail-item strong { display: block; color: #333; margin-bottom: 3px; }
+
+        /* 歷史記錄專用樣式 */
+        #history-table { font-size: 0.85rem; }
+        #history-table td, #history-table th { padding: 6px 8px; }
+        .history-month-row { background: #e6f7ff; color: var(--primary); font-weight: bold; font-size: 0.9rem; border-top: 2px solid #bae7ff; }
+        
+        /* 排序圖示 */
+        .sort-icon::after { content: ' ↕'; font-size: 0.8em; color: #ccc; }
+        .sort-asc::after { content: ' ↑'; color: var(--primary); }
+        .sort-desc::after { content: ' ↓'; color: var(--primary); }
+
+        /* 輸入控件 */
+        input, select, textarea { padding: 8px; border: 1px solid #d9d9d9; border-radius: 4px; width: 100%; box-sizing: border-box; transition: 0.3s; -webkit-appearance: none; }
+        input:focus { border-color: var(--primary); outline: none; }
+        input:disabled { background: #f5f5f5; cursor: not-allowed; }
+
+        /* 按鈕 */
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: #40a9ff; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-outline { background: transparent; border: 1px solid #d9d9d9; color: #666; }
+        .btn-sm { padding: 2px 6px; font-size: 0.75rem; }
+        .btn-row { display: flex; gap: 10px; margin-top: 15px; }
+
+        /* 徽章 */
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; color: white; font-weight: bold; }
+        .bg-gold { background: #faad14; }
+        .bg-gray { background: #bfbfbf; }
+        .bg-bronze { background: #d48806; }
+
+        /* --- 📱 移動端專屬優化 (iPhone/Android) --- */
+        @media (max-width: 768px) {
+            body { padding: 10px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+            .container { gap: 15px; }
+            .card { padding: 15px; border-radius: 12px; }
+            input, select, textarea { font-size: 16px !important; }
+
+            .dashboard-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+            .kpi-box { padding: 10px 5px; }
+            .kpi-val { font-size: 1.1rem; }
+            .kpi-title { font-size: 0.8rem; }
+
+            .grid-charts { grid-template-columns: 1fr !important; display: block !important; }
+            .grid-charts > div { height: 250px !important; margin-bottom: 20px; }
+            .import-grid { grid-template-columns: 1fr !important; }
+            .btn-row { flex-direction: column; }
+            .btn { width: 100%; padding: 12px; font-size: 1rem; }
+            .btn-sm { width: auto; padding: 4px 8px; }
+            .detail-content { grid-template-columns: 1fr !important; gap: 8px; }
+            #batch-input-table th, #batch-input-table td { padding: 5px 2px; }
+            #batch-input-table input, #batch-input-table select { padding: 8px 4px; }
+
+            /* --- 📇 卡片式表格 (Card View) 重點優化 --- */
+            .mobile-card-table { display: block; }
+            .mobile-card-table thead { display: none; } /* 隱藏表頭 */
+            
+            /* 將每一行變成卡片 */
+            .mobile-card-table tbody tr {
+                display: block;
+                background: #fff;
+                border: 1px solid #e8e8e8;
+                border-radius: 8px;
+                margin-bottom: 12px;
+                padding: 10px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+                position: relative;
+            }
+
+            /* 卡片內的單元格設定 */
+            .mobile-card-table td {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 8px 0;
+                border-bottom: 1px solid #f5f5f5;
+                text-align: right;
+                font-size: 0.95rem;
+                width: 100%; /* 確保佔滿寬度 */
+                box-sizing: border-box;
+                white-space: normal; /* 允許換行 */
+            }
+            .mobile-card-table td:last-child { border-bottom: none; }
+
+            /* 使用 data-label 屬性顯示左側標題 */
+            .mobile-card-table td::before {
+                content: attr(data-label);
+                font-weight: 600;
+                color: #888;
+                font-size: 0.85rem;
+                margin-right: 15px;
+                text-align: left;
+                flex-shrink: 0; /* 防止標籤被壓縮 */
+            }
+
+            /* --- 特殊處理：股票名稱欄位變成卡片標題 --- */
+            .mobile-card-table td[data-label="股票"] {
+                background: #fafafa;
+                margin: -10px -10px 10px -10px; /* 擴展至邊緣 */
+                padding: 10px 15px;
+                border-bottom: 1px solid #eee;
+                justify-content: flex-start;
+                border-radius: 8px 8px 0 0;
+                width: calc(100% + 20px);
+            }
+            .mobile-card-table td[data-label="股票"]::before { display: none; } /* 隱藏 "股票" 標籤 */
+            .mobile-card-table td[data-label="股票"] b { font-size: 1.1rem; color: var(--primary); }
+            
+            /* --- 特殊處理：詳細展開行 --- */
+            .mobile-card-table tr.detail-row {
+                margin-top: -12px; /* 緊接上一張卡片 */
+                border-top: none;
+                border-radius: 0 0 8px 8px;
+                background: #f7f7f7;
+                box-shadow: none;
+                padding: 0;
+                border: 1px solid #e8e8e8;
+                border-top: none;
+            }
+            .mobile-card-table tr.detail-row td {
+                display: block;
+                padding: 0;
+                border: none;
+            }
+            
+            /* 優化輸入框在卡片中的顯示 */
+            .mobile-card-table input[type="number"] {
+                width: 100px;
+                text-align: right;
+                border: 1px solid #ddd;
+            }
+        }
+        
+    	.import-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- KPI 區域 -->
+    <div class="card">
+        <h3>📊 投資組合總覽</h3>
+        <div class="dashboard-grid">
+            <div class="kpi-box">
+                <div class="kpi-title">總投入成本 (本金)</div>
+                <div class="small-text" style="margin-bottom:5px">(含買入及賣出手續費)</div>
+                <div class="kpi-val" id="kpi-cost">$0.00</div>
+            </div>
+            <div class="kpi-box">
+                <div class="kpi-title">當前持倉市值</div>
+                <div class="kpi-val" id="kpi-market">$0.00</div>
+            </div>
+            <div class="kpi-box">
+                <div class="kpi-title">總已收股息</div>
+                <div class="kpi-val text-up" id="kpi-div">$0.00</div>
+            </div>
+            <div class="kpi-box">
+                <div class="kpi-title">淨回報 (含已實現損益)</div>
+                <div class="kpi-val" id="kpi-pnl">$0.00</div>
+                <div class="small-text" id="kpi-pnl-pct">0.00%</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增交易 -->
+    <div class="card" style="border-left: 5px solid var(--primary);">
+        <h3>📝 新增交易 / 收息記錄</h3>
+        
+        <div style="display: flex; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 150px;">
+                <label class="small-text">日期</label>
+                <input type="date" id="batch-date">
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+                <label class="small-text">該次總手續費 ($)</label>
+                <input type="number" id="batch-fee" value="50">
+            </div>
+        </div>
+
+        <table id="batch-input-table">
+            <thead>
+                <tr>
+                    <th style="width: 25%">類型</th>
+                    <th style="width: 20%">代號</th>
+                    <th style="width: 25%">金額 / 單價</th>
+                    <th style="width: 20%">股數</th>
+                    <th style="width: 10%"></th>
+                </tr>
+            </thead>
+            <tbody id="batch-body"></tbody>
+        </table>
+        
+        <div class="btn-row">
+            <button class="btn btn-outline" onclick="addBatchRow()">+ 加入一行</button>
+            <button class="btn btn-primary" onclick="saveBatchTransaction()">💾 儲存所有記錄</button>
+        </div>
+    </div>
+
+    <!-- 排行榜 -->
+    <div class="card">
+        <h3>🏆 股票表現排行榜 <span class="small-text">含已實現損益 (賣出賺蝕)</span></h3>
+        <div class="small-text" style="margin-bottom: 10px;">
+            * <b>股息率 (Yield)</b> = 總股息 / 歷史總投入成本<br>
+            * <b>總回報 (Total)</b> = (市值 + 股息 + 賣出取回 - 總投入)
+        </div>
+        <div style="overflow-x: auto;">
+            <!-- 加入 mobile-card-table 類別 -->
+            <table id="roi-table" class="mobile-card-table">
+                <thead>
+                    <tr>
+                        <th onclick="sortRoi('code')">股票 <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('totalInvested')">總投入成本 <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('totalDiv')">總股息 <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('realizedPnl')">已平倉損益 <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('yield')">股息率 <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('totalProfit')">總回報 ($) <span class="sort-icon"></span></th>
+                        <th onclick="sortRoi('totalRetPct')">總回報率 (%) <span class="sort-icon"></span></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 持倉現況 -->
+    <div class="card">
+        <h3>💼 持倉現況 <button class="btn btn-success" style="font-size:0.8rem; padding:4px 8px;" onclick="fetchYahooPrices()">🔄 更新現價</button></h3>
+        <div class="small-text">點擊股票行可查看詳細資料</div>
+        <div style="overflow-x: auto;">
+            <!-- 加入 mobile-card-table 類別 -->
+            <table id="portfolio-table" class="mobile-card-table">
+                <thead>
+                    <tr>
+                        <th width="20%" onclick="sortPortfolio('code')">股票 <span class="sort-icon"></span></th>
+                        <th width="15%" onclick="sortPortfolio('qty')">持倉股數 <span class="sort-icon"></span></th>
+                        <th width="15%" onclick="sortPortfolio('avgPrice')">平均買入價 <span class="sort-icon"></span></th>
+                        <th width="15%">現價 (可輸入)</th>
+                        <th width="20%" onclick="sortPortfolio('marketVal')">市值 <span class="sort-icon"></span></th>
+                        <th width="15%" onclick="sortPortfolio('paperPnl')">帳面盈虧 <span class="sort-icon"></span></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 圖表區域 -->
+    <div class="card">
+        <h3>📈 資產趨勢與分佈</h3>
+        <div class="grid-charts" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <div style="height: 300px;">
+                <canvas id="trendChart1"></canvas>
+            </div>
+            <div style="height: 300px;">
+                <canvas id="trendChart2"></canvas>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;" class="grid-charts">
+            <div style="height: 300px;">
+                <canvas id="pieChart"></canvas>
+            </div>
+            <div style="height: 300px;">
+                <canvas id="barChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匯入功能 -->
+    <div class="card" style="border: 2px dashed var(--primary); background: #f9fbff;">
+        <h3>📤 Excel 數據批量匯入 (專業版邏輯)</h3>
+        <div class="import-grid">
+            <div>
+                <label><b>1. 月供記錄表 (v5.0 邏輯)</b></label>
+                <textarea id="excel-buy-area" rows="5" placeholder="貼上月供表範圍..."></textarea>
+                <button class="btn btn-primary" style="width:100%; margin-top:10px;" onclick="importBuyData()">匯入買入及股息</button>
+            </div>
+            <div>
+                <label><b>2. 賣出股票表 (v5.2 邏輯 A1:X4)</b></label>
+                <textarea id="excel-sell-area" rows="5" placeholder="貼上賣出表 A1:X4 範圍..."></textarea>
+                <button class="btn btn-danger" style="width:100%; margin-top:10px;" onclick="importSellData()">匯入賣出記錄</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 交易流水帳 -->
+    <div class="card">
+        <h3>🗂️ 交易流水帳 (舊到新)</h3>
+        <div style="max-height: 500px; overflow-y: auto;">
+            <table id="history-table">
+                <thead>
+                    <tr>
+                        <th style="width: 15%">日期</th>
+                        <th style="width: 15%">代號</th>
+                        <th style="width: 10%">動作</th>
+                        <th style="width: 12%">單價</th>
+                        <th style="width: 10%">股數</th>
+                        <th style="width: 12%">手續費</th>
+                        <th style="width: 15%">總變動</th>
+                        <th style="width: 11%"></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div style="margin-top: 10px; text-align: right;">
+            <button class="btn btn-sm btn-danger" onclick="clearAllData()">⚠️ 清空所有資料</button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // 啟用 Chart.js DataLabels
+    Chart.register(ChartDataLabels);
+
+    // --- 內建股票中文名稱映射 ---
+    const stockMap = {
+        "0005.HK": "滙豐控股", "0012.HK": "恒基地產", "0027.HK": "銀河娛樂",
+        "0388.HK": "香港交易所", "0823.HK": "領展房產", "0883.HK": "中海油",
+        "2638.HK": "港燈-SS", "2800.HK": "盈富基金", "0001.HK": "長和",
+        "0003.HK": "煤氣", "0011.HK": "恒生銀行", "0016.HK": "新鴻基",
+        "0066.HK": "港鐵", "0700.HK": "騰訊", "09988.HK": "阿里",
+        "03690.HK": "美團", "01299.HK": "友邦", "00939.HK": "建行",
+        "01398.HK": "工行", "03988.HK": "中行"
+    };
+
+    function getStockName(code) {
+        if(!code) return "";
+        let c = code.toUpperCase();
+        if(!c.includes('.HK')) c += '.HK';
+        let name = stockMap[c] || c;
+        // 限制長度 6 字
+        if (name.length > 6) name = name.substring(0, 6);
+        if (stockMap[c]) return `${c.replace('.HK','')} ${name}`;
+        return c;
+    }
+
+    // --- 全局變數 ---
+    let transactions = JSON.parse(localStorage.getItem('stock_v4_trans')) || [];
+    let priceCache = JSON.parse(localStorage.getItem('stock_v4_prices')) || {};
+    let batchTemplate = JSON.parse(localStorage.getItem('stock_v4_template')) || [];
+
+    // 排序狀態
+    let portfolioSort = { key: 'marketVal', order: 'desc' };
+    let roiSort = { key: 'totalRetPct', order: 'desc' };
+
+    document.getElementById('batch-date').valueAsDate = new Date();
+    
+    // 初始化輸入框
+    if (batchTemplate.length > 0) {
+        batchTemplate.forEach(item => addBatchRow(item.code, item.qty, 'buy'));
+    } else {
+        addBatchRow();
+    }
+
+    let trendChartInst1 = null;
+    let trendChartInst2 = null;
+    let pieChartInst = null;
+    let barChartInst = null;
+
+    // 啟動
+    renderAll();
+
+    // --- 核心計算引擎 ---
+    function getPortfolioAnalysis() {
+        let p = {};
+        
+        let sortedTrans = [...transactions].sort((a,b) => new Date(a.date) - new Date(b.date));
+
+        sortedTrans.forEach(t => {
+            if (!p[t.code]) {
+                p[t.code] = { 
+                    qty: 0, 
+                    currentCost: 0, 
+                    totalInvested: 0, 
+                    totalDiv: 0, 
+                    soldCash: 0, 
+                    soldCost: 0,
+                    sellFees: 0, 
+                    grossSold: 0 
+                };
+            }
+            let stock = p[t.code];
+
+            if (t.type === 'buy') {
+                stock.qty += t.qty;
+                stock.currentCost += t.total;
+                stock.totalInvested += t.total;
+            } 
+            else if (t.type === 'sell') {
+                let avgCost = stock.qty > 0 ? (stock.currentCost / stock.qty) : 0;
+                let costOfSoldPart = avgCost * t.qty;
+                
+                let fee = t.fee || 0;
+                let gross = t.total + fee;
+
+                stock.qty -= t.qty;
+                stock.currentCost -= costOfSoldPart;
+                stock.soldCost += costOfSoldPart;
+                stock.soldCash += t.total;
+                stock.sellFees += fee;
+                stock.grossSold += gross;
+                
+                if(stock.qty <= 0.0001) {
+                    stock.qty = 0;
+                    stock.currentCost = 0;
+                }
+            } 
+            else if (t.type === 'dividend_cash' || t.type === 'dividend') {
+                stock.totalDiv += t.total;
+            } 
+            else if (t.type === 'dividend_scrip') {
+                stock.qty += t.qty;
+            }
+        });
+        return p;
+    }
+
+    // --- 格式化工具 ---
+    function fmtMoney(num) {
+        return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    // --- 渲染 UI ---
+    function renderAll() {
+        const portfolio = getPortfolioAnalysis();
+        renderKPI(portfolio);
+        renderPortfolioTable(portfolio);
+        renderROITable(portfolio);
+        renderHistory();
+        renderCharts(portfolio);
+    }
+
+    // 1. 渲染 KPI
+    function renderKPI(p) {
+        let totalCost = 0;   
+        let totalMarket = 0; 
+        let totalDiv = 0;    
+        let totalSoldCash = 0; 
+        let totalInvestedAllTime = 0; 
+        let totalSellFees = 0; 
+
+        for (let c in p) {
+            const s = p[c];
+            const price = priceCache[c] || 0;
+            totalCost += s.currentCost;
+            totalMarket += (s.qty * price);
+            totalDiv += s.totalDiv;
+            totalSoldCash += s.soldCash;
+            totalInvestedAllTime += s.totalInvested;
+            totalSellFees += s.sellFees;
+        }
+
+        const adjustedTotalInvested = totalInvestedAllTime + totalSellFees;
+        const totalReturn = (totalMarket + totalDiv + totalSoldCash) - totalInvestedAllTime;
+        const retPct = adjustedTotalInvested > 0 ? (totalReturn / adjustedTotalInvested * 100) : 0;
+
+        document.getElementById('kpi-cost').textContent = '$' + fmtMoney(adjustedTotalInvested);
+        document.getElementById('kpi-market').textContent = '$' + fmtMoney(totalMarket);
+        document.getElementById('kpi-div').textContent = '$' + fmtMoney(totalDiv);
+        
+        const pnlEl = document.getElementById('kpi-pnl');
+        pnlEl.textContent = (totalReturn>=0?'+':'') + '$' + fmtMoney(totalReturn);
+        
+        pnlEl.className = 'kpi-val'; 
+        if(totalReturn >= 0) pnlEl.classList.add('text-up');
+        else pnlEl.classList.add('text-down');
+        
+        const pctEl = document.getElementById('kpi-pnl-pct');
+        pctEl.textContent = (retPct>=0?'+':'') + retPct.toFixed(2) + '%';
+        pctEl.className = retPct >= 0 ? 'small-text text-up' : 'small-text text-down';
+    }
+
+    // 2. 渲染持倉表格 (加入 data-label 支援卡片視圖)
+    function sortPortfolio(key) {
+        if (portfolioSort.key === key) {
+            portfolioSort.order = portfolioSort.order === 'asc' ? 'desc' : 'asc';
+        } else {
+            portfolioSort.key = key;
+            portfolioSort.order = 'desc';
+        }
+        renderPortfolioTable(getPortfolioAnalysis());
+    }
+
+    function renderPortfolioTable(p) {
+        const tbody = document.querySelector('#portfolio-table tbody');
+        tbody.innerHTML = '';
+        
+        let rows = [];
+        for (let c in p) {
+            const s = p[c];
+            if (s.qty <= 0.01) continue;
+            const price = priceCache[c] || 0;
+            const marketVal = s.qty * price;
+            const avgPrice = s.qty > 0 ? (s.currentCost / s.qty) : 0;
+            const paperPnl = marketVal - s.currentCost;
+
+            rows.push({
+                code: c,
+                name: getStockName(c),
+                qty: s.qty,
+                avgPrice: avgPrice,
+                price: price,
+                marketVal: marketVal,
+                paperPnl: paperPnl,
+                data: s
+            });
+        }
+
+        rows.sort((a, b) => {
+            let valA = a[portfolioSort.key];
+            let valB = b[portfolioSort.key];
+            if (typeof valA === 'string') return portfolioSort.order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            return portfolioSort.order === 'asc' ? valA - valB : valB - valA;
+        });
+
+        rows.forEach(r => {
+            const rowId = `row-${r.code.replace('.','-')}`;
+            tbody.innerHTML += `
+                <tr class="clickable-row" onclick="toggleDetail('${rowId}')">
+                    <td data-label="股票"><b>${r.name}</b><br><span class="small-text">${r.code}</span></td>
+                    <td data-label="持倉股數">${r.qty.toFixed(0)}</td>
+                    <td data-label="平均買入價">$${fmtMoney(r.avgPrice)}</td>
+                    <td data-label="現價 (可輸入)"><input type="number" value="${r.price}" style="width:80px" onclick="event.stopPropagation()" onchange="updatePrice('${r.code}', this.value)"></td>
+                    <td data-label="市值">$${fmtMoney(r.marketVal)}</td>
+                    <td data-label="帳面盈虧" class="${r.paperPnl>=0?'text-up':'text-down'}">${r.paperPnl>=0?'+':''}${fmtMoney(r.paperPnl)}</td>
+                </tr>
+                <tr id="${rowId}" class="detail-row">
+                    <td colspan="6">
+                        <div class="detail-content">
+                            <div class="detail-item"><strong>持倉成本</strong> $${fmtMoney(r.data.currentCost)}</div>
+                            <div class="detail-item"><strong>歷史總股息</strong> $${fmtMoney(r.data.totalDiv)}</div>
+                            <div class="detail-item"><strong>已變現金額</strong> $${fmtMoney(r.data.soldCash)}</div>
+                            <div class="detail-item"><strong>歷史總投入</strong> $${fmtMoney(r.data.totalInvested)}</div>
+                            <div class="detail-item"><strong>已平倉損益</strong> <span class="${(r.data.soldCash - r.data.soldCost)>=0?'text-up':'text-down'}">$${fmtMoney(r.data.soldCash - r.data.soldCost)}</span></div>
+                            <div class="detail-item"><strong>賣出手續費</strong> $${fmtMoney(r.data.sellFees)}</div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+        updateSortIcons('portfolio-table', portfolioSort);
+    }
+
+    function toggleDetail(id) {
+        const row = document.getElementById(id);
+        if(row.style.display === 'table-row' || row.style.display === 'block') row.style.display = 'none';
+        else {
+            // Check if mobile logic applies, but 'table-row' usually works fine even in card view with my CSS
+            row.style.display = 'table-row'; 
+            // In mobile CSS, .detail-row display is set to block when active? 
+            // Actually, simply toggling display: table-row is intercepted by CSS media query display: block;
+        }
+    }
+
+    // 3. 渲染 ROI 排行榜 (加入 data-label)
+    function sortRoi(key) {
+        if (roiSort.key === key) {
+            roiSort.order = roiSort.order === 'asc' ? 'desc' : 'asc';
+        } else {
+            roiSort.key = key;
+            roiSort.order = 'desc';
+        }
+        renderROITable(getPortfolioAnalysis());
+    }
+
+    function renderROITable(p) {
+        const tbody = document.querySelector('#roi-table tbody');
+        tbody.innerHTML = '';
+
+        let rows = [];
+        for (let c in p) {
+            const s = p[c];
+            if (s.totalInvested === 0 && s.qty === 0 && s.totalDiv === 0) continue;
+
+            const price = priceCache[c] || 0;
+            const marketVal = s.qty * price;
+            const realizedPnl = s.soldCash - s.soldCost;
+            const totalProfit = (marketVal + s.totalDiv + s.soldCash) - s.totalInvested;
+            const adjustedInv = s.totalInvested + s.sellFees;
+            const yieldRate = adjustedInv > 0 ? (s.totalDiv / adjustedInv) * 100 : 0;
+            const totalRetPct = adjustedInv > 0 ? (totalProfit / adjustedInv) * 100 : 0;
+
+            rows.push({
+                code: c,
+                name: getStockName(c),
+                totalInvested: adjustedInv,
+                totalDiv: s.totalDiv,
+                realizedPnl: realizedPnl,
+                yield: yieldRate,
+                totalRetPct: totalRetPct,
+                totalProfit: totalProfit
+            });
+        }
+
+        rows.sort((a, b) => {
+            let valA = a[roiSort.key];
+            let valB = b[roiSort.key];
+            if (typeof valA === 'string') return roiSort.order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            return roiSort.order === 'asc' ? valA - valB : valB - valA;
+        });
+
+        rows.forEach((r, idx) => {
+            let badge = '';
+            if (roiSort.key === 'totalRetPct' && roiSort.order === 'desc') {
+                if (idx === 0) badge = '<span class="badge bg-gold">1</span> ';
+                if (idx === 1) badge = '<span class="badge bg-gray">2</span> ';
+                if (idx === 2) badge = '<span class="badge bg-bronze">3</span> ';
+            }
+
+            tbody.innerHTML += `
+                <tr>
+                    <td data-label="股票">${badge}<b>${r.name}</b><br><span class="small-text">${r.code}</span></td>
+                    <td data-label="總投入成本">$${fmtMoney(r.totalInvested)}</td>
+                    <td data-label="總股息">$${fmtMoney(r.totalDiv)}</td>
+                    <td data-label="已平倉損益" class="${r.realizedPnl>=0?'text-up':'text-down'}">${r.realizedPnl>=0?'+':''}${fmtMoney(r.realizedPnl)}</td>
+                    <td data-label="股息率" class="text-up">${r.yield.toFixed(2)}%</td>
+                    <td data-label="總回報 ($)" class="${r.totalProfit>=0?'text-up':'text-down'}"><b>${r.totalProfit>=0?'+':''}${fmtMoney(r.totalProfit)}</b></td>
+                    <td data-label="總回報率 (%)" class="${r.totalRetPct>=0?'text-up':'text-down'}"><b>${r.totalRetPct>=0?'+':''}${r.totalRetPct.toFixed(2)}%</b></td>
+                </tr>
+            `;
+        });
+        updateSortIcons('roi-table', roiSort);
+    }
+
+    function updateSortIcons(tableId, sortState) {
+        document.querySelectorAll(`#${tableId} th`).forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+            if (th.getAttribute('onclick') && th.getAttribute('onclick').includes(`'${sortState.key}'`)) {
+                th.classList.add(sortState.order === 'asc' ? 'sort-asc' : 'sort-desc');
+            }
+        });
+    }
+
+    // --- 圖表功能 ---
+    function renderCharts(p) {
+        const dates = [...new Set(transactions.map(t => t.date.substring(0,7)))].sort();
+        
+        let accRealizedPnl = 0; 
+        let accDiv = 0;         
+        let accHoldingCost = 0; 
+        
+        let dataRealized = [], dataDiv = [], dataHoldingCost = [], dataMarketLine = [];
+        
+        let currentTotalMarket = 0;
+        for (let c in p) { if(p[c].qty > 0) currentTotalMarket += (p[c].qty * (priceCache[c]||0)); }
+
+        let sorted = [...transactions].sort((a,b) => new Date(a.date) - new Date(b.date));
+        let monthly = {};
+        
+        let tempStock = {}; 
+
+        sorted.forEach(t => {
+            let m = t.date.substring(0,7);
+            
+            if(!tempStock[t.code]) tempStock[t.code] = { qty:0, cost:0 };
+            let ts = tempStock[t.code];
+
+            if(t.type === 'buy') {
+                ts.qty += t.qty;
+                ts.cost += t.total;
+                accHoldingCost += t.total;
+            }
+            else if(t.type === 'dividend_cash') {
+                accDiv += t.total;
+            }
+            else if(t.type === 'dividend_scrip') {
+                ts.qty += t.qty;
+            }
+            else if(t.type === 'sell') {
+                let avg = ts.qty > 0 ? ts.cost / ts.qty : 0;
+                let costPart = avg * t.qty;
+                
+                let pnl = t.total - costPart;
+                accRealizedPnl += pnl;
+
+                ts.qty -= t.qty;
+                ts.cost -= costPart;
+                accHoldingCost -= costPart;
+                
+                if(ts.qty <= 0.0001) { ts.qty = 0; ts.cost = 0; }
+            }
+
+            monthly[m] = { realized: accRealizedPnl, div: accDiv, holding: accHoldingCost };
+        });
+
+        dates.forEach(m => {
+            let lastR = dataRealized.length ? dataRealized[dataRealized.length-1] : 0;
+            let lastD = dataDiv.length ? dataDiv[dataDiv.length-1] : 0;
+            let lastH = dataHoldingCost.length ? dataHoldingCost[dataHoldingCost.length-1] : 0;
+            
+            if(monthly[m]) {
+                dataRealized.push(monthly[m].realized);
+                dataDiv.push(monthly[m].div);
+                dataHoldingCost.push(monthly[m].holding);
+            } else {
+                dataRealized.push(lastR);
+                dataDiv.push(lastD);
+                dataHoldingCost.push(lastH);
+            }
+            dataMarketLine.push(currentTotalMarket);
+        });
+
+        // Chart 1
+        if(trendChartInst1) trendChartInst1.destroy();
+        trendChartInst1 = new Chart(document.getElementById('trendChart1'), {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [
+                    { label: '累積股息收入', data: dataDiv, borderColor: '#52c41a', backgroundColor: 'rgba(82,196,26,0.1)', fill: true }
+                ]
+            },
+            options: { 
+                maintainAspectRatio: false, 
+                plugins: { 
+                    title: { display: true, text: '累積股息收入趨勢' },
+                    datalabels: { display: false } 
+                } 
+            }
+        });
+
+        // Chart 2
+        if(trendChartInst2) trendChartInst2.destroy();
+        trendChartInst2 = new Chart(document.getElementById('trendChart2'), {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [
+                    { label: '累積持倉成本', data: dataHoldingCost, borderColor: '#1890ff', backgroundColor: 'rgba(24,144,255,0.1)', fill: true },
+                    { label: '現有持倉價值 (參考線)', data: dataMarketLine, borderColor: '#f5222d', borderDash: [5, 5], fill: false, pointRadius: 0 }
+                ]
+            },
+            options: { 
+                maintainAspectRatio: false, 
+                plugins: { 
+                    title: { display: true, text: '成本規模 vs 當前市值' },
+                    datalabels: { display: false }
+                } 
+            }
+        });
+
+        // Pie Chart
+        if(pieChartInst) pieChartInst.destroy();
+        let labels = [], data = [];
+        let totalVal = 0;
+        
+        for(let c in p) { 
+            if(p[c].qty>0) { 
+                let v = p[c].qty * (priceCache[c]||0);
+                totalVal += v;
+            } 
+        }
+
+        for(let c in p) { 
+            if(p[c].qty>0) { 
+                let v = p[c].qty * (priceCache[c]||0);
+                labels.push(getStockName(c).replace(/[0-9.]/g,'').substring(0,6) || c); 
+                data.push(v); 
+            } 
+        }
+
+        pieChartInst = new Chart(document.getElementById('pieChart'), {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data, backgroundColor: ['#1890ff','#13c2c2','#52c41a','#fadb14','#f5222d','#722ed1','#eb2f96','#fa8c16'] }] },
+            options: { 
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right' },
+                    datalabels: {
+                        display: true, 
+                        color: '#fff',
+                        font: { weight: 'bold' },
+                        formatter: (value, ctx) => {
+                            let percentage = totalVal > 0 ? (value*100 / totalVal).toFixed(1)+"%" : "0%";
+                            return percentage;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Bar Chart
+        if(barChartInst) barChartInst.destroy();
+        let yearly = {};
+        sorted.forEach(t => {
+            if(t.type.includes('dividend') && !t.type.includes('scrip')) {
+                let y = t.date.substring(0,4);
+                yearly[y] = (yearly[y]||0) + t.total;
+            }
+        });
+        barChartInst = new Chart(document.getElementById('barChart'), {
+            type: 'bar',
+            data: { labels: Object.keys(yearly), datasets: [{ label: '年度股息收入', data: Object.values(yearly), backgroundColor: '#13c2c2' }] },
+            options: { 
+                maintainAspectRatio: false,
+                plugins: {
+                    datalabels: { display: false } 
+                }
+            }
+        });
+    }
+
+    // --- 交易記錄 (舊到新) ---
+    function renderHistory() {
+        const tbody = document.querySelector('#history-table tbody');
+        tbody.innerHTML = '';
+        const list = [...transactions].sort((a,b) => new Date(a.date) - new Date(b.date));
+        
+        let currentMonth = '';
+
+        list.forEach(t => {
+            const m = t.date.substring(0, 7);
+            if (m !== currentMonth) {
+                currentMonth = m;
+                tbody.innerHTML += `<tr class="history-month-row"><td colspan="8">${m.replace('-', '年')}月</td></tr>`;
+            }
+
+            let act = '', valClass = '';
+            if(t.type==='buy') { act='買入'; valClass='text-down'; }
+            else if(t.type==='sell') { act='賣出'; valClass='text-up'; }
+            else if(t.type.includes('cash')) { act='收息(錢)'; valClass='text-up'; }
+            else if(t.type.includes('scrip')) { act='收息(貨)'; valClass='text-up'; }
+            
+            let priceStr = t.price ? `$${fmtMoney(t.price)}` : '-';
+            let qtyStr = t.qty ? t.qty : '-';
+            let feeStr = t.fee ? `$${fmtMoney(t.fee)}` : '-';
+            let totalStr = '';
+
+            if (t.type === 'buy') totalStr = `-$${fmtMoney(t.total)}`;
+            else if (t.type === 'dividend_scrip') totalStr = `+${t.qty}股`;
+            else totalStr = `+$${fmtMoney(t.total)}`;
+
+            tbody.innerHTML += `
+                <tr>
+                    <td>${t.date}</td>
+                    <td><b>${getStockName(t.code)}</b><br><span class="small-text">${t.code}</span></td>
+                    <td>${act}</td>
+                    <td>${priceStr}</td>
+                    <td>${qtyStr}</td>
+                    <td class="small-text">${feeStr}</td>
+                    <td class="${valClass}" style="font-weight:bold">${totalStr}</td>
+                    <td><button class="btn btn-sm btn-danger" onclick="delTrans(${t.id})">X</button></td>
+                </tr>
+            `;
+        });
+    }
+
+    // --- 輔助功能 ---
+    function addBatchRow(code='', qty='', type='buy') {
+        const tbody = document.getElementById('batch-body');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <select class="row-type" onchange="handleTypeChange(this)">
+                    <option value="buy" ${type==='buy'?'selected':''}>買入</option>
+                    <option value="dividend_cash">收息 (派錢)</option>
+                    <option value="dividend_scrip">收息 (派貨)</option>
+                    <option value="sell">賣出</option>
+                </select>
+            </td>
+            <td><input type="text" class="row-code" value="${code}" placeholder="0005.HK" oninput="this.value=this.value.toUpperCase()"></td>
+            <td><input type="number" class="row-price" step="0.01" placeholder="單價"></td>
+            <td><input type="number" class="row-qty" value="${qty}" placeholder="股數"></td>
+            <td><button class="btn btn-danger" style="padding:5px;" onclick="this.closest('tr').remove()">X</button></td>
+        `;
+        tbody.appendChild(tr);
+        handleTypeChange(tr.querySelector('.row-type'));
+    }
+
+    function handleTypeChange(select) {
+        const tr = select.closest('tr');
+        const priceInp = tr.querySelector('.row-price');
+        const qtyInp = tr.querySelector('.row-qty');
+        const type = select.value;
+        priceInp.disabled = false; qtyInp.disabled = false;
+        priceInp.value = ''; qtyInp.value = '';
+        if(type === 'dividend_cash') {
+            priceInp.placeholder = "總金額 ($)"; qtyInp.disabled = true; qtyInp.placeholder = "-";
+        } else if(type === 'dividend_scrip') {
+            priceInp.disabled = true; priceInp.placeholder = "0"; qtyInp.placeholder = "收到股數";
+        } else {
+            priceInp.placeholder = "單價"; qtyInp.placeholder = "股數";
+        }
+    }
+
+    function saveBatchTransaction() {
+        const date = document.getElementById('batch-date').value;
+        const globalFee = parseFloat(document.getElementById('batch-fee').value) || 0;
+        const rows = document.querySelectorAll('#batch-body tr');
+        let newTrans = [];
+        let totalBuyVal = 0;
+        let template = [];
+        rows.forEach(tr => {
+            const type = tr.querySelector('.row-type').value;
+            let code = tr.querySelector('.row-code').value.trim();
+            const val1 = parseFloat(tr.querySelector('.row-price').value) || 0;
+            const val2 = parseFloat(tr.querySelector('.row-qty').value) || 0;
+            if(!code) return;
+            if(!code.includes('.')) code += '.HK';
+            let t = { id: Date.now()+Math.random(), date, type, code, price:0, qty:0, total:0, fee:0 };
+            if(type === 'buy') {
+                t.price = val1; t.qty = val2; t.total = val1*val2; totalBuyVal += t.total; template.push({code, qty: val2});
+            } else if(type === 'sell') {
+                t.price = val1; t.qty = val2; t.total = val1*val2; 
+            } else if(type === 'dividend_cash') {
+                t.total = val1;
+            } else if(type === 'dividend_scrip') {
+                t.qty = val2;
+            }
+            newTrans.push(t);
+        });
+        if(newTrans.length === 0) return;
+        newTrans.forEach(t => {
+            if(t.type === 'buy' && totalBuyVal > 0) { t.fee = globalFee * (t.total / totalBuyVal); t.total += t.fee; }
+            if(t.type === 'sell') { 
+                if(t.price > 0 && globalFee > 0) {
+                     t.fee = globalFee; 
+                     t.total -= t.fee;
+                }
+            }
+        });
+        transactions = transactions.concat(newTrans);
+        transactions.sort((a,b) => new Date(a.date) - new Date(b.date));
+        saveAndRefresh();
+        if(template.length>0) localStorage.setItem('stock_v4_template', JSON.stringify(template));
+        document.getElementById('batch-body').innerHTML = '';
+        if(template.length>0) template.forEach(x => addBatchRow(x.code, x.qty)); else addBatchRow();
+        alert("已儲存記錄！");
+    }
+
+    function saveAndRefresh() { 
+        localStorage.setItem('stock_v4_trans', JSON.stringify(transactions)); 
+        renderAll(); 
+    }
+    function updatePrice(code, val) {
+        priceCache[code] = parseFloat(val);
+        localStorage.setItem('stock_v4_prices', JSON.stringify(priceCache));
+        renderAll();
+    }
+    async function fetchYahooPrices() {
+        const p = getPortfolioAnalysis();
+        const codes = Object.keys(p).filter(c => p[c].qty > 0);
+        if (codes.length === 0) return alert("目前沒有持倉需要更新");
+        let updated = 0;
+        for (let code of codes) {
+            try {
+                const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}?interval=1d&range=1d`;
+                const res = await fetch(url);
+                const data = await res.json();
+                const price = data.chart.result[0].meta.regularMarketPrice;
+                if(price) { priceCache[code] = price; updated++; }
+            } catch(e) { console.error(code, e); }
+        }
+        localStorage.setItem('stock_v4_prices', JSON.stringify(priceCache));
+        renderAll();
+        alert(`已更新 ${updated} 隻股票價格`);
+    }
+
+    function importBuyData() {
+        const raw = document.getElementById('excel-buy-area').value;
+        if(!raw) return;
+        const lines = raw.split('\n').map(l => l.split('\t'));
+        const header = lines[0];
+        let newItems = [];
+        let stockCols = [];
+        for(let col=0; col < header.length; col++) {
+            let code = header[col] ? header[col].trim() : '';
+            if(code && (code.includes('.') || !isNaN(code)) && code !== '日期' && code !== '手續費') {
+                 if(!code.includes('.')) code += ".HK";
+                 stockCols.push({ index: col, code: code });
+            }
+        }
+        for(let i=1; i<lines.length; i++) {
+            const r = lines[i];
+            if(!r[0] || r[0].includes('年')) continue;
+            const date = r[0].trim().replace(/\//g, '-');
+            const rowTotalFee = parseFloat(r[1]) || 0;
+            let rowBuys = [];
+            let rowBuyValue = 0;
+            stockCols.forEach(sc => {
+                const qty = parseFloat(r[sc.index]) || 0;
+                let priceRaw = r[sc.index+1];
+                if (typeof priceRaw === 'string') priceRaw = priceRaw.trim();
+                const price = parseFloat(priceRaw) || 0;
+                const div = parseFloat(r[sc.index+3]) || 0;
+                if(qty > 0) {
+                    if (price > 0) {
+                        rowBuys.push({ code: sc.code, qty, price, rawTotal: qty*price });
+                        rowBuyValue += (qty*price);
+                    } else {
+                         newItems.push({ id: Math.random(), date, type: 'dividend_scrip', code: sc.code, qty: qty, price: 0, total: 0, fee: 0 });
+                    }
+                }
+                if(div > 0) newItems.push({ id: Math.random(), date, type: 'dividend_cash', code: sc.code, qty: 0, price: 0, total: div, fee: 0 });
+            });
+            rowBuys.forEach(b => {
+                let allocatedFee = 0;
+                if(rowBuyValue > 0) allocatedFee = rowTotalFee * (b.rawTotal / rowBuyValue);
+                newItems.push({ id: Math.random(), date, type: 'buy', code: b.code, qty: b.qty, price: b.price, total: b.rawTotal + allocatedFee, fee: allocatedFee });
+            });
+        }
+        transactions = [...transactions, ...newItems].sort((a,b)=>new Date(a.date)-new Date(b.date));
+        saveAndRefresh();
+        alert(`匯入成功！已加入 ${newItems.length} 筆記錄。`);
+        document.getElementById('excel-buy-area').value = '';
+    }
+
+    function importSellData() {
+        const raw = document.getElementById('excel-sell-area').value;
+        if(!raw) return;
+        const lines = raw.split('\n').map(l => l.split('\t'));
+        let newSells = [];
+        for (let col = 0; col < lines[0].length; col += 4) {
+            let code = lines[0][col] ? lines[0][col].trim() : "";
+            if (!code || isNaN(code)) continue;
+            if (!code.includes('.')) code += ".HK";
+            for (let i = 2; i < lines.length; i++) {
+                const r = lines[i];
+                const date = r[col] ? r[col].trim().replace(/\//g, '-') : "";
+                if (!date || date === "日期") continue;
+                const fee = Math.abs(parseFloat(r[col+1])) || 0;
+                const qty = Math.abs(parseFloat(r[col+2])) || 0;
+                const price = parseFloat(r[col+3]) || 0;
+                if (qty > 0 && price > 0) {
+                    newSells.push({ id: Math.random(), date, type: 'sell', code, qty, price, total: (qty * price) - fee, fee });
+                }
+            }
+        }
+        transactions = [...transactions, ...newSells].sort((a,b)=>new Date(a.date)-new Date(b.date));
+        saveAndRefresh();
+        alert(`成功匯入 ${newSells.length} 筆賣出記錄`);
+        document.getElementById('excel-sell-area').value = '';
+    }
+
+    function delTrans(id) {
+        if(confirm("刪除此記錄？")) {
+            transactions = transactions.filter(t => t.id !== id);
+            localStorage.setItem('stock_v4_trans', JSON.stringify(transactions));
+            renderAll();
+        }
+    }
+    function clearAllData() {
+        if(confirm("⚠️ 確定清空所有資料？無法復原！")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+</script>
+</body>
+</html>
