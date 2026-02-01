@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v1.2</title>
+    <title>Stockeeper v1.3</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -24,7 +24,7 @@
         .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
         
         /* 卡片樣式 */
-        .card { background: var(--card-bg); padding: 24px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+        .card { background: var(--card-bg); padding: 24px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); overflow: hidden; /* 防止表格溢出圓角 */ }
         h2, h3 { margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; font-size: 1.1rem; color: #1f1f1f; display: flex; justify-content: space-between; align-items: center; }
         
         /* 顏色工具 */
@@ -82,12 +82,24 @@
         .bg-gold { background: #faad14; }
         .bg-gray { background: #bfbfbf; }
         .bg-bronze { background: #d48806; }
+        
+        .import-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 
         /* --- 📱 移動端專屬優化 (iPhone/Android) --- */
         @media (max-width: 768px) {
-            body { padding: 10px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
-            .container { gap: 15px; }
-            .card { padding: 15px; border-radius: 12px; }
+            body { padding: 10px 0px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); background: #fff; } /* Body 背景改白，減少邊距感 */
+            .container { gap: 10px; width: 100%; max-width: 100%; overflow-x: hidden; }
+            
+            /* 卡片調整 */
+            .card { 
+                padding: 15px; 
+                border-radius: 0; /* 移除圓角讓它看起來更像原生 App */
+                box-shadow: none; 
+                border-bottom: 10px solid var(--bg); /* 用底部邊框模擬卡片間距 */
+            }
+            .card:last-child { border-bottom: none; }
+            
+            h3 { font-size: 1rem; }
             input, select, textarea { font-size: 16px !important; }
 
             .dashboard-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -102,29 +114,40 @@
             .btn { width: 100%; padding: 12px; font-size: 1rem; }
             .btn-sm { width: auto; padding: 4px 8px; }
             .detail-content { grid-template-columns: 1fr !important; gap: 8px; }
-            #batch-input-table th, #batch-input-table td { padding: 5px 2px; }
+            
+            /* 新增交易表格微調 */
+            #batch-input-table th, #batch-input-table td { padding: 5px 2px; font-size: 0.8rem; }
             #batch-input-table input, #batch-input-table select { padding: 8px 4px; }
+            
+            /* --- 📇 卡片式表格優化 v3 (全屏闊度 & 隱藏優化) --- */
+            
+            /* 全屏闊度容器修正 (Full Bleed) */
+            /* 針對手機版，強制表格容器向左右延伸以抵消 Card Padding */
+            .full-bleed-mobile {
+                margin-left: -15px;
+                margin-right: -15px;
+                width: calc(100% + 30px);
+                border-top: 1px solid #eee;
+            }
 
-            /* --- 📇 卡片式表格優化 v2 --- */
-            .mobile-card-table { display: block; }
+            .mobile-card-table { display: block; width: 100%; }
             .mobile-card-table thead { display: none; }
             
-            /* 行變卡片 */
-            .mobile-card-table tbody tr {
+            /* 每一行變成一張卡片 */
+            .mobile-card-table tbody tr.clickable-row, 
+            .mobile-card-table tbody tr.history-item-row {
                 display: block;
                 background: #fff;
-                border: 1px solid #e8e8e8;
-                border-radius: 8px;
-                /* 移除底部邊距，因為可能後面接 detail row */
-                margin-bottom: 0; 
-                padding: 10px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+                border-bottom: 1px solid #f0f0f0;
+                padding: 12px 15px; /* 增加內距，因為我們拉寬了容器 */
                 position: relative;
             }
             
-            /* 增加卡片間距 (只對非詳細行的 tr 生效，或是主行) */
-            .mobile-card-table tbody tr.clickable-row {
-                margin-top: 12px;
+            /* 歷史記錄月份分隔條 */
+            .mobile-card-table tbody tr.history-month-row {
+                display: block;
+                padding: 8px 15px;
+                background: #f7faff;
             }
 
             /* 單元格樣式 */
@@ -132,19 +155,18 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 8px 0;
-                border-bottom: 1px solid #f5f5f5;
+                padding: 4px 0; /* 減少上下間距，更緊湊 */
+                border-bottom: none; /* 移除內部線條，只留行底線 */
                 text-align: right;
                 font-size: 0.95rem;
                 width: 100%;
                 box-sizing: border-box;
             }
-            .mobile-card-table td:last-child { border-bottom: none; }
 
-            /* 左側標題 */
+            /* 左側標題 (Data Label) */
             .mobile-card-table td::before {
                 content: attr(data-label);
-                font-weight: 600;
+                font-weight: normal;
                 color: #888;
                 font-size: 0.85rem;
                 margin-right: 15px;
@@ -152,71 +174,92 @@
                 flex-shrink: 0;
             }
 
-            /* 股票標題列 (全寬背景) */
-            .mobile-card-table td[data-label="股票"] {
-                background: #fafafa;
-                margin: -10px -10px 5px -10px; /* 拉伸至邊緣 */
-                padding: 10px 15px;
-                border-bottom: 1px solid #eee;
-                justify-content: space-between; /* 讓箭頭靠右 */
-                border-radius: 8px 8px 0 0;
-                width: calc(100% + 20px);
+            /* 股票標題列 (第一行) - 特別處理 */
+            .mobile-card-table td[data-label="股票"], 
+            .mobile-card-table td[data-label="日期"] {
+                padding-bottom: 8px;
+                margin-bottom: 8px;
+                border-bottom: 1px dashed #eee;
+                font-size: 1rem;
             }
-            .mobile-card-table td[data-label="股票"]::before { display: none; }
-            .mobile-card-table td[data-label="股票"] b { font-size: 1.1rem; color: var(--primary); }
+            .mobile-card-table td[data-label="股票"]::before,
+            .mobile-card-table td[data-label="日期"]::before { display: none; }
             
-            /* 展開箭頭 */
-            .mobile-card-table td[data-label="股票"]::after {
+            .mobile-card-table td[data-label="股票"] {
+                justify-content: flex-start;
+                gap: 10px;
+            }
+            
+            /* 展開箭頭指示 */
+            .mobile-card-table td[data-label="股票"]::after,
+            .mobile-card-table td[data-label="日期"]::after {
                 content: '▼';
-                color: #ccc;
+                color: #ddd;
                 font-size: 0.8rem;
+                margin-left: auto; /* 推到最右 */
                 transition: transform 0.3s;
             }
-            .mobile-card-table tr.expanded td[data-label="股票"]::after {
+            .mobile-card-table tr.expanded td[data-label="股票"]::after,
+            .mobile-card-table tr.expanded td[data-label="日期"]::after {
                 transform: rotate(180deg);
                 color: var(--primary);
             }
 
             /* --- 隱藏次要資訊 (預設) --- */
+            /* 這是你覺得不尋常的地方，現在改為 display: none 完全隱藏，展開時用 flex */
             .mobile-card-table td.mobile-hidden {
-                display: none;
+                display: none; 
             }
             /* 展開時顯示次要資訊 */
             .mobile-card-table tr.expanded td.mobile-hidden {
                 display: flex;
-                animation: fadeIn 0.3s;
+                animation: fadeIn 0.2s ease-in;
+                background: #fdfdfd;
+                padding: 8px;
+                margin: 2px 0;
+                border-radius: 4px;
+            }
+            /* 輸入框優化 */
+            .mobile-card-table input[type="number"] {
+                width: 100px;
+                text-align: right;
+                border: 1px solid #ddd;
+                padding: 6px;
+                background: #fff;
             }
 
-            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 
             /* 詳細資料行 (Detail Row) */
             .mobile-card-table tr.detail-row {
-                margin-top: -1px; /* 無縫連接 */
-                border-top: 1px dashed #eee;
-                border-radius: 0 0 8px 8px;
-                background: #fcfcfc;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                padding: 0;
+                background: #fafafa;
+                border-bottom: 1px solid #e8e8e8;
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
             }
             .mobile-card-table tr.detail-row td {
                 display: block;
                 padding: 0;
-                border: none;
             }
-            
-            /* 調整表格容器外距，實現全寬感 */
-            div[style*="overflow-x: auto"] {
-                margin-left: -24px; /* 抵消 card padding */
-                margin-right: -24px;
-                padding-left: 10px; /* 稍微留白 */
-                padding-right: 10px;
-                width: calc(100% + 48px);
+            .detail-content {
+                padding: 15px;
             }
-            
-            .mobile-card-table input[type="number"] { width: 100px; text-align: right; border: 1px solid #ddd; }
+
+            /* --- 交易流水帳的手機版優化 --- */
+            /* 讓重點資訊（總變動）即使在收起狀態也顯示在第一行 */
+            .history-primary-info {
+                display: flex;
+                justify-content: space-between;
+                width: 100%;
+                font-weight: bold;
+            }
+            .history-sub-info {
+                font-size: 0.85rem;
+                color: #666;
+                margin-top: 4px;
+                display: block; /* 確保換行 */
+                text-align: left;
+            }
         }
-        
-    	.import-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     </style>
 </head>
 <body>
@@ -289,8 +332,8 @@
             * <b>股息率 (Yield)</b> = 總股息 / 歷史總投入成本<br>
             * <b>總回報 (Total)</b> = (市值 + 股息 + 賣出取回 - 總投入)
         </div>
-        <div style="overflow-x: auto;">
-            <!-- 加入 mobile-card-table 類別 -->
+        <!-- 修正：加入 full-bleed-mobile 類別，移除 overflow-x: auto (手機版改用卡片顯示，不需要橫向捲動) -->
+        <div class="full-bleed-mobile">
             <table id="roi-table" class="mobile-card-table">
                 <thead>
                     <tr>
@@ -311,9 +354,10 @@
     <!-- 持倉現況 -->
     <div class="card">
         <h3>💼 持倉現況 <button class="btn btn-success" style="font-size:0.8rem; padding:4px 8px;" onclick="fetchYahooPrices()">🔄 更新現價</button></h3>
-        <div class="small-text">點擊股票行可查看詳細資料</div>
-        <div style="overflow-x: auto;">
-            <!-- 加入 mobile-card-table 類別 -->
+        <div class="small-text">點擊股票可展開/摺疊詳細資料及輸入現價</div>
+        
+        <!-- 修正：加入 full-bleed-mobile 類別 -->
+        <div class="full-bleed-mobile">
             <table id="portfolio-table" class="mobile-card-table">
                 <thead>
                     <tr>
@@ -371,8 +415,9 @@
     <!-- 交易流水帳 -->
     <div class="card">
         <h3>🗂️ 交易流水帳 (舊到新)</h3>
-        <div style="max-height: 500px; overflow-y: auto;">
-            <table id="history-table">
+        <div class="full-bleed-mobile" style="max-height: 500px; overflow-y: auto;">
+            <!-- 加入 mobile-card-table 類別，套用相同的樣式 -->
+            <table id="history-table" class="mobile-card-table">
                 <thead>
                     <tr>
                         <th style="width: 15%">日期</th>
@@ -388,7 +433,7 @@
                 <tbody></tbody>
             </table>
         </div>
-        <div style="margin-top: 10px; text-align: right;">
+        <div style="margin-top: 10px; text-align: right; padding: 0 10px;">
             <button class="btn btn-sm btn-danger" onclick="clearAllData()">⚠️ 清空所有資料</button>
         </div>
     </div>
@@ -605,12 +650,18 @@
             // 注意：data-label 的 mobile-hidden class 用於手機版預設隱藏
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="toggleDetail('${rowId}', this)">
-                    <td data-label="股票"><b>${r.name}</b><br><span class="small-text">${r.code}</span></td>
-                    <td data-label="持倉股數" class="mobile-hidden">${r.qty.toFixed(0)}</td>
-                    <td data-label="平均買入價" class="mobile-hidden">$${fmtMoney(r.avgPrice)}</td>
-                    <td data-label="現價 (可輸入)" class="mobile-hidden"><input type="number" value="${r.price}" style="width:80px" onclick="event.stopPropagation()" onchange="updatePrice('${r.code}', this.value)"></td>
+                    <td data-label="股票">
+                        <div><b>${r.name}</b> <span class="small-text">${r.code}</span></div>
+                    </td>
                     <td data-label="市值">$${fmtMoney(r.marketVal)}</td>
                     <td data-label="帳面盈虧" class="${r.paperPnl>=0?'text-up':'text-down'}">${r.paperPnl>=0?'+':''}${fmtMoney(r.paperPnl)}</td>
+                    
+                    <!-- 這些是手機版預設隱藏，展開後顯示的 -->
+                    <td data-label="現價 (輸入)" class="mobile-hidden" style="background:#e6f7ff;">
+                        <input type="number" value="${r.price}" placeholder="現價" onclick="event.stopPropagation()" onchange="updatePrice('${r.code}', this.value)">
+                    </td>
+                    <td data-label="持倉股數" class="mobile-hidden">${r.qty.toFixed(0)}</td>
+                    <td data-label="平均買入價" class="mobile-hidden">$${fmtMoney(r.avgPrice)}</td>
                 </tr>
                 <tr id="${rowId}" class="detail-row">
                     <td colspan="6">
@@ -629,17 +680,13 @@
         updateSortIcons('portfolio-table', portfolioSort);
     }
 
-    // 修改：同時切換詳細行和主行的 expanded 狀態
     function toggleDetail(rowId, mainRow) {
         const row = document.getElementById(rowId);
         
-        // 判斷是否為手機 (寬度 <= 768px)
-        const isMobile = window.innerWidth <= 768;
-        
-        // 桌面版邏輯 (table-row), 手機版邏輯 (block)
-        // 但 CSS 已處理 display: block/none via CSS classes? No, inline style overrides.
-        // 簡單邏輯：如果是 none 就顯示，否則隱藏
+        // 切換顯示狀態
         if(row.style.display === 'none' || row.style.display === '') {
+            // 手機版使用 block 以支援全寬，電腦版使用 table-row
+            const isMobile = window.innerWidth <= 768;
             row.style.display = isMobile ? 'block' : 'table-row';
             mainRow.classList.add('expanded');
         } else {
@@ -703,23 +750,17 @@
                 if (idx === 2) badge = '<span class="badge bg-bronze">3</span> ';
             }
 
-            // 在手機版隱藏次要資訊: 成本, 股息, 平倉, 股息率, 總回報額
-            // 只顯示: 股票名, 總回報率%
-            // 點擊後展開其餘
-            
-            // 這裡沒有 "detail-row" 機制像 Portfolio 那樣。
-            // 我們可以使用同樣的 class toggling 來顯示隱藏的 td。
-            // onclick 事件加在 tr 上
-            
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="this.classList.toggle('expanded')">
-                    <td data-label="股票">${badge}<b>${r.name}</b><br><span class="small-text">${r.code}</span></td>
+                    <td data-label="股票"><div>${badge}<b>${r.name}</b> <span class="small-text">${r.code}</span></div></td>
+                    <td data-label="總回報率 (%)" class="${r.totalRetPct>=0?'text-up':'text-down'}"><b>${r.totalRetPct>=0?'+':''}${r.totalRetPct.toFixed(2)}%</b></td>
+                    
+                    <!-- 隱藏項目 -->
+                    <td data-label="總回報 ($)" class="mobile-hidden ${r.totalProfit>=0?'text-up':'text-down'}"><b>${r.totalProfit>=0?'+':''}${fmtMoney(r.totalProfit)}</b></td>
+                    <td data-label="已平倉損益" class="mobile-hidden ${r.realizedPnl>=0?'text-up':'text-down'}">${r.realizedPnl>=0?'+':''}${fmtMoney(r.realizedPnl)}</td>
                     <td data-label="總投入成本" class="mobile-hidden">$${fmtMoney(r.totalInvested)}</td>
                     <td data-label="總股息" class="mobile-hidden">$${fmtMoney(r.totalDiv)}</td>
-                    <td data-label="已平倉損益" class="mobile-hidden ${r.realizedPnl>=0?'text-up':'text-down'}">${r.realizedPnl>=0?'+':''}${fmtMoney(r.realizedPnl)}</td>
                     <td data-label="股息率" class="text-up mobile-hidden">${r.yield.toFixed(2)}%</td>
-                    <td data-label="總回報 ($)" class="mobile-hidden ${r.totalProfit>=0?'text-up':'text-down'}"><b>${r.totalProfit>=0?'+':''}${fmtMoney(r.totalProfit)}</b></td>
-                    <td data-label="總回報率 (%)" class="${r.totalRetPct>=0?'text-up':'text-down'}"><b>${r.totalRetPct>=0?'+':''}${r.totalRetPct.toFixed(2)}%</b></td>
                 </tr>
             `;
         });
@@ -916,14 +957,16 @@
             const m = t.date.substring(0, 7);
             if (m !== currentMonth) {
                 currentMonth = m;
+                // 加入 mobile-card-table 樣式
                 tbody.innerHTML += `<tr class="history-month-row"><td colspan="8">${m.replace('-', '年')}月</td></tr>`;
             }
 
             let act = '', valClass = '';
-            if(t.type==='buy') { act='買入'; valClass='text-down'; }
-            else if(t.type==='sell') { act='賣出'; valClass='text-up'; }
-            else if(t.type.includes('cash')) { act='收息(錢)'; valClass='text-up'; }
-            else if(t.type.includes('scrip')) { act='收息(貨)'; valClass='text-up'; }
+            let actionIcon = '';
+            if(t.type==='buy') { act='買入'; valClass='text-down'; actionIcon='📥'; }
+            else if(t.type==='sell') { act='賣出'; valClass='text-up'; actionIcon='📤'; }
+            else if(t.type.includes('cash')) { act='收息(錢)'; valClass='text-up'; actionIcon='💰'; }
+            else if(t.type.includes('scrip')) { act='收息(貨)'; valClass='text-up'; actionIcon='🎁'; }
             
             let priceStr = t.price ? `$${fmtMoney(t.price)}` : '-';
             let qtyStr = t.qty ? t.qty : '-';
@@ -933,17 +976,34 @@
             if (t.type === 'buy') totalStr = `-$${fmtMoney(t.total)}`;
             else if (t.type === 'dividend_scrip') totalStr = `+${t.qty}股`;
             else totalStr = `+$${fmtMoney(t.total)}`;
-
+            
+            // 這裡使用了新的結構：
+            // 1. data-label="日期" 包含了日期和重點 (為了讓它們在手機版置頂)
+            // 2. mobile-hidden class 用於次要資訊 (單價/股數/手續費)
+            // 3. onclick toggles 'expanded'
             tbody.innerHTML += `
-                <tr>
-                    <td>${t.date}</td>
-                    <td><b>${getStockName(t.code)}</b><br><span class="small-text">${t.code}</span></td>
-                    <td>${act}</td>
-                    <td>${priceStr}</td>
-                    <td>${qtyStr}</td>
-                    <td class="small-text">${feeStr}</td>
-                    <td class="${valClass}" style="font-weight:bold">${totalStr}</td>
-                    <td><button class="btn btn-sm btn-danger" onclick="delTrans(${t.id})">X</button></td>
+                <tr class="history-item-row" onclick="this.classList.toggle('expanded')">
+                    <td data-label="日期">
+                        <div class="history-primary-info">
+                            <span>${t.date.slice(5)} ${actionIcon} ${act}</span>
+                            <span class="${valClass}">${totalStr}</span>
+                        </div>
+                    </td>
+                    
+                    <td data-label="代號">
+                        <div><b>${getStockName(t.code)}</b> <span class="small-text">${t.code}</span></div>
+                    </td>
+                    
+                    <!-- 手機版預設隱藏的次要資訊 -->
+                    <td data-label="單價" class="mobile-hidden">${priceStr}</td>
+                    <td data-label="股數" class="mobile-hidden">${qtyStr}</td>
+                    <td data-label="手續費" class="mobile-hidden small-text">${feeStr}</td>
+                    
+                    <!-- 桌面版需要顯示的欄位 (手機版透過 CSS 隱藏了重複資訊) -->
+                    <td class="desktop-only" style="display:none">${act}</td> 
+                    <td class="desktop-only ${valClass}" style="display:none; font-weight:bold">${totalStr}</td>
+                    
+                    <td data-label="操作"><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); delTrans(${t.id})">刪除</button></td>
                 </tr>
             `;
         });
