@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v2.3 (模擬器增強版)</title>
+    <title>Stockeeper v2.4 (股息抓取修復版)</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -802,6 +802,21 @@
                             // 獲取股息事件
                             const events = result.events ? result.events.div : {};
 
+                            // --- 修正開始: 預處理股息為「年月」對照表 ---
+                            // 舊邏輯是直接對應 timestamp，導致非當月1號的股息被漏掉
+                            let divMap = {};
+                            if (events) {
+                                Object.keys(events).forEach(ts => {
+                                    const ev = events[ts];
+                                    const dateObj = new Date(ev.date * 1000); // Yahoo 使用秒數
+                                    // 轉成 YYYY-MM 格式
+                                    const monthKey = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
+                                    if(!divMap[monthKey]) divMap[monthKey] = 0;
+                                    divMap[monthKey] += ev.amount;
+                                });
+                            }
+                            // --- 修正結束 ---
+
                             // 即時現價
                             const livePrice = meta.regularMarketPrice;
 
@@ -814,20 +829,13 @@
                                     
                                     for(let i=0; i < totalLabels.length; i++) {
                                         let price = null;
-                                        let timestamp = null; 
                                         
-                                        // 查找當月股息 (Yahoo 時間戳是秒)
-                                        // 簡單匹配：這個月的 timestamp 範圍內的股息
-                                        // Yahoo 回傳的 timestamp 陣列與 quotes 對應
-                                        if (result.timestamp && result.timestamp[i]) {
-                                            timestamp = result.timestamp[i];
-                                            if (events) {
-                                                // 檢查該時間點是否有股息
-                                                if (events[timestamp]) {
-                                                    let divRate = events[timestamp].amount;
-                                                    accumulatedDiv += (sShares * divRate); // 派息給當前持股
-                                                }
-                                            }
+                                        // 判斷當前月份是否有股息 (使用年月字串比對)
+                                        let currentMonthKey = totalLabels[i];
+                                        if (divMap[currentMonthKey]) {
+                                            // 假設月供金額買入後，還是能收到該月股息 (或者該月持有份額)
+                                            // 這裡使用累積後的 sShares 計算
+                                            accumulatedDiv += (sShares * divMap[currentMonthKey]);
                                         }
 
                                         // 如果是最後一個月(現在)，優先使用即時現價
