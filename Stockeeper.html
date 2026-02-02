@@ -236,7 +236,7 @@
         .sim-result-table td { border-bottom: 1px solid #eee; padding: 10px; vertical-align: middle; }
         .sim-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: var(--sim-primary); }
         
-        /* 模擬器展開明細樣式 (新) */
+        /* 模擬器展開明細樣式 */
         .sim-detail-row { display: none; background: #fcfaff; }
         .sim-detail-row.expanded { display: table-row; }
         .sim-detail-inner-table { width: 95%; margin: 10px auto; border: 1px solid #eee; background: white; font-size: 0.85rem; }
@@ -741,7 +741,7 @@
         }
     }
 
-    // 🔥 模擬器核心重構：股息修復版 🔥
+    // 🔥 模擬器核心重構：股息修復版 + 安全檢查 🔥
     async function runMultiSimulation() {
         if(simStocks.length === 0) return alert("請先加入股票");
         
@@ -774,7 +774,7 @@
                 let costArr = new Array(totalLabels.length).fill(0);
                 let assetArr = new Array(totalLabels.length).fill(0);
                 let accumulatedDiv = 0; 
-                let monthlyDetails = []; // 存儲每月詳細數據
+                let monthlyDetails = []; 
 
                 if (!stock.useManual) {
                     try {
@@ -784,13 +784,19 @@
                             const data = await res.json();
                             const result = data.chart.result[0];
                             const meta = result.meta;
-                            const quotes = result.indicators.quote[0].close;
-                            const timestamps = result.timestamp;
+                            // 安全檢查 1: 確保 quote 存在
+                            const quoteData = result.indicators.quote[0];
+                            const quotes = quoteData ? quoteData.close : [];
+                            const timestamps = result.timestamp || [];
                             
-                            // 💡 修復重點：獨立處理股息，根據日期將股息分配到對應的「年月」桶中
-                            const rawEvents = result.events ? result.events.div : {};
+                            // 安全檢查 2: 確保 events 存在
+                            // Yahoo 有時返回 null events，或有 events 但沒有 div
+                            let rawEvents = {};
+                            if (result.events && result.events.div) {
+                                rawEvents = result.events.div;
+                            }
                             
-                            // 建立資料桶 Map: "YYYY-MM" -> { priceSum, count, div, lastPrice }
+                            // 建立資料桶 Map
                             let monthMap = {};
                             totalLabels.forEach(label => {
                                 monthMap[label] = { priceSum: 0, count: 0, div: 0, lastPrice: 0 };
@@ -811,79 +817,73 @@
                                 }
                             }
 
-                            // 2. 填入股息 (獨立循環，不依賴股價 index)
+                            // 2. 填入股息
                             Object.keys(rawEvents).forEach(ts => {
                                 const divData = rawEvents[ts];
                                 const dateObj = new Date(ts * 1000);
                                 const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
-                                // 即使該月沒有股價記錄（例如停牌但派息），也要記錄股息
                                 if (monthMap[key]) {
                                     monthMap[key].div += divData.amount;
-                                } else {
-                                    // 極端情況：該月不在範圍內，或 map key 對不上，這裡暫略
                                 }
                             });
 
                             // 3. 模擬計算
-                            success = true;
-                            let sShares = 0;
-                            let sCost = 0;
-                            const livePrice = meta.regularMarketPrice;
+                            if (quotes.length > 0) {
+                                success = true;
+                                let sShares = 0;
+                                let sCost = 0;
+                                const livePrice = meta.regularMarketPrice;
 
-                            for(let i=0; i < totalLabels.length; i++) {
-                                const key = totalLabels[i];
-                                const mData = monthMap[key];
-                                
-                                let monthlyPrice = 0;
-                                // 最後一個月優先用即時價
-                                if (i === totalLabels.length - 1 && livePrice) {
-                                    monthlyPrice = livePrice;
-                                } else if (mData && mData.count > 0) {
-                                    monthlyPrice = mData.priceSum / mData.count; // 月平均價
-                                } else {
-                                    // 若無價格，往前找最近的
-                                    for(let k=i-1; k>=0; k--) {
-                                        if(monthMap[totalLabels[k]].count > 0) {
-                                            monthlyPrice = monthMap[totalLabels[k]].lastPrice;
-                                            break;
+                                for(let i=0; i < totalLabels.length; i++) {
+                                    const key = totalLabels[i];
+                                    const mData = monthMap[key];
+                                    
+                                    let monthlyPrice = 0;
+                                    if (i === totalLabels.length - 1 && livePrice) {
+                                        monthlyPrice = livePrice;
+                                    } else if (mData && mData.count > 0) {
+                                        monthlyPrice = mData.priceSum / mData.count; 
+                                    } else {
+                                        for(let k=i-1; k>=0; k--) {
+                                            if(monthMap[totalLabels[k]].count > 0) {
+                                                monthlyPrice = monthMap[totalLabels[k]].lastPrice;
+                                                break;
+                                            }
                                         }
+                                        if(monthlyPrice === 0 && livePrice) monthlyPrice = livePrice;
                                     }
-                                    if(monthlyPrice === 0 && livePrice) monthlyPrice = livePrice;
+
+                                    let sharesBought = 0;
+                                    if (monthlyPrice > 0) {
+                                        sCost += (stock.amt + feePerStock);
+                                        sharesBought = (stock.amt / monthlyPrice);
+                                        sShares += sharesBought;
+                                    }
+
+                                    let monthlyDivRec = 0;
+                                    if (mData && mData.div > 0) {
+                                        monthlyDivRec = (sShares * mData.div);
+                                        accumulatedDiv += monthlyDivRec;
+                                    }
+
+                                    let currentPrice = monthlyPrice > 0 ? monthlyPrice : (mData ? mData.lastPrice : 0);
+                                    let asset = (sShares * currentPrice) + accumulatedDiv;
+                                    costArr[i] = sCost;
+                                    assetArr[i] = asset;
+
+                                    monthlyDetails.push({
+                                        month: key,
+                                        price: monthlyPrice,
+                                        sharesBought: sharesBought,
+                                        sharesTotal: sShares,
+                                        divReceived: monthlyDivRec
+                                    });
                                 }
-
-                                let sharesBought = 0;
-                                if (monthlyPrice > 0) {
-                                    sCost += (stock.amt + feePerStock);
-                                    sharesBought = (stock.amt / monthlyPrice);
-                                    sShares += sharesBought;
-                                }
-
-                                // 累計股息 (持有股數 * 該月總股息)
-                                let monthlyDivRec = 0;
-                                if (mData && mData.div > 0) {
-                                    monthlyDivRec = (sShares * mData.div);
-                                    accumulatedDiv += monthlyDivRec;
-                                }
-
-                                let currentPrice = monthlyPrice > 0 ? monthlyPrice : (mData ? mData.lastPrice : 0);
-                                let asset = (sShares * currentPrice) + accumulatedDiv;
-                                costArr[i] = sCost;
-                                assetArr[i] = asset;
-
-                                // 記錄詳細數據
-                                monthlyDetails.push({
-                                    month: key,
-                                    price: monthlyPrice,
-                                    sharesBought: sharesBought,
-                                    sharesTotal: sShares,
-                                    divReceived: monthlyDivRec
-                                });
                             }
                         }
                     } catch(e) { console.log(stock.code + " fetch failed", e); }
                 }
 
-                // 失敗或手動模式
                 if(!success) {
                     stock.useManual = true; 
                     renderSimList(); 
@@ -928,7 +928,7 @@
                     totalDiv: accumulatedDiv,
                     finalCost: costArr[costArr.length-1],
                     finalAsset: assetArr[assetArr.length-1],
-                    details: monthlyDetails // 存入明細
+                    details: monthlyDetails 
                 });
             }
 
@@ -973,7 +973,6 @@
         const tbody = document.getElementById('sim-detail-tbody');
         tbody.innerHTML = '';
 
-        // 更新排序圖示
         document.querySelectorAll('.sim-result-table th').forEach(th => {
             th.classList.remove('sort-asc', 'sort-desc');
             if(th.getAttribute('onclick') && th.getAttribute('onclick').includes(`'${simSort.key}'`)) {
@@ -981,8 +980,6 @@
             }
         });
 
-        // 複製一份陣列進行排序，不影響原始數據順序(為了 aggregate 計算正確，這裡只改變顯示順序)
-        // 為了讓 checkbox 仍能對應原始數據，我們需要在顯示對象中保留原始 index
         let displayList = lastSimResults.stocks.map((s, i) => ({...s, originalIndex: i}));
 
         displayList.sort((a, b) => {
@@ -1002,9 +999,8 @@
         displayList.forEach((s) => {
             const netReturn = s.finalAsset - s.finalCost;
             const netClass = netReturn >= 0 ? 'text-up' : 'text-down';
-            const idx = s.originalIndex; // 使用原始索引以匹配數據
+            const idx = s.originalIndex; 
 
-            // 構建明細表格 HTML (反轉順序，最新在最上)
             let detailsHtml = [...s.details].reverse().map(d => `
                 <tr>
                     <td>${d.month}</td>
@@ -1063,7 +1059,7 @@
             if (chk.checked) {
                 hasChecked = true;
                 const idx = parseInt(chk.getAttribute('data-idx'));
-                const stockData = lastSimResults.stocks[idx]; // 這裡用原始索引取資料
+                const stockData = lastSimResults.stocks[idx]; 
                 
                 for (let i = 0; i < count; i++) {
                     totalCostArr[i] += stockData.dataCost[i];
