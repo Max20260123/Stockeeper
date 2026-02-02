@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v2.1 (自動抓價修復版)</title>
+    <title>Stockeeper v2.2 (直連現價修復版)</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -295,7 +295,7 @@
     <div class="card sim-card" style="border-left: none; border-top: 4px solid var(--sim-primary);">
         <h3 style="color: var(--sim-primary); border-color: var(--sim-border);">
             🔮 多股月供回測模擬器 
-            <span class="small-text">資料由 Yahoo 提供 (經 Proxy)</span>
+            <span class="small-text">數據由 Yahoo 提供</span>
         </h3>
         
         <div class="sim-control-panel">
@@ -598,9 +598,44 @@
         const amt = parseFloat(document.getElementById('sim-input-amt').value);
         if(!code || !amt) return alert("請輸入代號及金額");
         
+        // 1. 新增股票
         simStocks.push({ id: Date.now(), code, amt, manualPrice: '', manualCurrent: '', manualYield: '', useManual: false });
         renderSimList();
+        
+        // 2. 立即抓取現價並更新到手動輸入框 (作為參考)
+        const newStock = simStocks[simStocks.length - 1];
+        fetchCurrentPriceForSim(newStock);
+
         document.getElementById('sim-input-code').value = '';
+    }
+    
+    // 🚀 新增：為模擬器抓取單一股票現價 (填入 current price)
+    async function fetchCurrentPriceForSim(stock) {
+        try {
+            // 使用 interval=1d 抓取最新數據
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?interval=1d&range=1d`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const price = data.chart.result[0].meta.regularMarketPrice;
+            
+            if(price) {
+                // 更新數據
+                stock.manualCurrent = price;
+                
+                // 嘗試更新 UI (如果手動框已打開)
+                const input = document.querySelector(`#manual-box-${stock.id} input[onchange*='current']`);
+                if(input) {
+                    input.value = price;
+                    input.style.backgroundColor = '#ecfdf5'; // 閃一下綠色提示已抓取
+                }
+                
+                // 更新標籤 (顯示現價)
+                const tag = document.getElementById(`sim-tag-${stock.id}`);
+                if(tag) tag.innerHTML = `${stock.code} <small style='color:#666'>($${price})</small>`;
+            }
+        } catch(e) {
+            console.log("Sim price fetch fail", e);
+        }
     }
 
     function removeSimStock(id) {
@@ -626,10 +661,11 @@
             // 手動模式或自動模式的顯示狀態
             const manualStyle = s.useManual ? 'display:flex' : 'display:none';
             const btnText = s.useManual ? '取消手動' : '手動/修正';
+            const priceDisplay = s.manualCurrent ? `<small style='color:#666'>($${s.manualCurrent})</small>` : '';
 
             div.innerHTML = `
                 <div style="width:100%; display:flex; justify-content:space-between; align-items:center;">
-                    <div><span class="sim-tag">${s.code}</span> <b style="margin-left:5px">$${s.amt}/月</b></div>
+                    <div><span class="sim-tag" id="sim-tag-${s.id}">${s.code} ${priceDisplay}</span> <b style="margin-left:5px">$${s.amt}/月</b></div>
                     <div>
                         <button class="sim-manual-btn" onclick="toggleManual(${s.id})">${btnText}</button>
                         <button class="btn btn-sm btn-danger" style="margin-left:5px" onclick="removeSimStock(${s.id})">X</button>
@@ -644,7 +680,7 @@
                     </div>
                     <div style="flex:1; min-width:120px;">
                         <label class="small-text">現價 (結算用)</label>
-                        <input type="number" class="sim-error-input" value="${s.manualCurrent}" onchange="updateSimManual(${s.id}, 'current', this.value)">
+                        <input type="number" class="sim-error-input" value="${s.manualCurrent}" placeholder="自動抓取中..." onchange="updateSimManual(${s.id}, 'current', this.value)">
                     </div>
                     <div style="flex:1; min-width:100px;">
                         <label class="small-text">預期年息%</label>
@@ -675,7 +711,7 @@
         const startMonth = parseInt(document.getElementById('sim-start-month').value);
         const feePerStock = 50; 
         
-        btn.textContent = "⏳ 連線 Yahoo 數據中...";
+        btn.textContent = "⏳ 讀取數據中...";
         btn.disabled = true;
 
         let totalLabels = [];
@@ -705,16 +741,18 @@
                 // 只有當「未強制使用手動」時才去 fetch
                 if (!stock.useManual) {
                     try {
-                        // 使用 CORS Proxy 繞過瀏覽器限制
-                        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1mo&events=div`;
-                        const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(yahooUrl);
-                        
-                        const res = await fetch(proxyUrl);
+                        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1mo&events=div`;
+                        const res = await fetch(url);
                         if(res.ok) {
                             const data = await res.json();
                             const result = data.chart.result[0];
+                            const meta = result.meta;
                             const quotes = result.indicators.quote[0].close;
                             
+                            // 🚀 關鍵修正：獲取即時現價 (regularMarketPrice)
+                            // 歷史數據可能只到上個月底，這會導致現價計算錯誤。我們強制使用 meta 中的即時價。
+                            const livePrice = meta.regularMarketPrice;
+
                             if(quotes && quotes.length > 0) {
                                 let firstValidPrice = quotes.find(q => q !== null);
                                 if (firstValidPrice) {
@@ -724,10 +762,18 @@
                                     
                                     for(let i=0; i < totalLabels.length; i++) {
                                         let price = null;
-                                        if (i < quotes.length) price = quotes[i];
-                                        if (price === null || price === undefined) {
-                                            for(let k=i-1; k>=0; k--) { if(quotes[k]) { price = quotes[k]; break; } }
+                                        
+                                        // 如果是最後一個月(現在)，優先使用即時現價
+                                        if (i === totalLabels.length - 1 && livePrice) {
+                                            price = livePrice;
+                                        } else {
+                                            if (i < quotes.length) price = quotes[i];
+                                            if (price === null || price === undefined) {
+                                                // 往前找最近的有效價格
+                                                for(let k=i-1; k>=0; k--) { if(quotes[k]) { price = quotes[k]; break; } }
+                                            }
                                         }
+                                        
                                         if (!price) price = firstValidPrice;
 
                                         sCost += (stock.amt + feePerStock);
@@ -740,9 +786,7 @@
                                 }
                             }
                         }
-                    } catch(e) { 
-                        console.log(stock.code + " fetch failed", e); 
-                    }
+                    } catch(e) { console.log(stock.code + " fetch failed", e); }
                 }
 
                 // 如果 Fetch 失敗 或 強制手動
@@ -769,7 +813,7 @@
                         for(let i=0; i < totalLabels.length; i++) {
                             // 1. 成本累積
                             let monthlyCost = (stock.amt + feePerStock);
-                            totalCostArr[i] += (monthlyCost * (i+1));
+                            totalCostArr[i] += (monthlyCost * (i+1)); 
                             
                             // 2. 股數累積 (假設每月都用買入價買)
                             let sharesBought = stock.amt / mBuyPrice;
@@ -829,7 +873,6 @@
 
         } catch(e) {
             console.error(e);
-            alert("模擬運算發生錯誤，請檢查網絡");
         } finally {
             btn.textContent = "🚀 開始組合模擬";
             btn.disabled = false;
@@ -1213,11 +1256,9 @@
         let updated = 0;
         for (let code of codes) {
             try {
-                // 使用 CORS Proxy
+                // 使用直連 Yahoo URL
                 const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${code}?interval=1d&range=1d`;
-                const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(yahooUrl);
-                
-                const res = await fetch(proxyUrl);
+                const res = await fetch(yahooUrl);
                 const data = await res.json();
                 const price = data.chart.result[0].meta.regularMarketPrice;
                 if(price) { priceCache[code] = price; updated++; }
