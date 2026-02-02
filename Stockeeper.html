@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v2.0 (v1.6 風格增強版)</title>
+    <title>Stockeeper v2.1 (自動抓價修復版)</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -295,7 +295,7 @@
     <div class="card sim-card" style="border-left: none; border-top: 4px solid var(--sim-primary);">
         <h3 style="color: var(--sim-primary); border-color: var(--sim-border);">
             🔮 多股月供回測模擬器 
-            <span class="small-text">數據僅供參考，不影響記帳</span>
+            <span class="small-text">資料由 Yahoo 提供 (經 Proxy)</span>
         </h3>
         
         <div class="sim-control-panel">
@@ -441,7 +441,7 @@
     <div class="card">
         <h3>
             💼 持倉現況 
-            <button class="btn btn-success btn-sm" onclick="fetchYahooPrices()">🔄 更新現價</button>
+            <button class="btn btn-success btn-sm" onclick="fetchYahooPrices()">🔄 網上更新現價</button>
         </h3>
         <div class="small-text" style="margin-bottom: 10px;">點擊股票可展開/摺疊詳細資料及輸入現價</div>
         
@@ -675,7 +675,7 @@
         const startMonth = parseInt(document.getElementById('sim-start-month').value);
         const feePerStock = 50; 
         
-        btn.textContent = "⏳ 運算中...";
+        btn.textContent = "⏳ 連線 Yahoo 數據中...";
         btn.disabled = true;
 
         let totalLabels = [];
@@ -705,8 +705,11 @@
                 // 只有當「未強制使用手動」時才去 fetch
                 if (!stock.useManual) {
                     try {
-                        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1mo&events=div`;
-                        const res = await fetch(url);
+                        // 使用 CORS Proxy 繞過瀏覽器限制
+                        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1mo&events=div`;
+                        const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(yahooUrl);
+                        
+                        const res = await fetch(proxyUrl);
                         if(res.ok) {
                             const data = await res.json();
                             const result = data.chart.result[0];
@@ -737,7 +740,9 @@
                                 }
                             }
                         }
-                    } catch(e) { console.log(stock.code + " fetch failed"); }
+                    } catch(e) { 
+                        console.log(stock.code + " fetch failed", e); 
+                    }
                 }
 
                 // 如果 Fetch 失敗 或 強制手動
@@ -764,23 +769,8 @@
                         for(let i=0; i < totalLabels.length; i++) {
                             // 1. 成本累積
                             let monthlyCost = (stock.amt + feePerStock);
-                            totalCostArr[i] += (monthlyCost * (i+1)); // 修正：總成本是每月的累加，但這裡是 array[i] 代表第 i 個月的總數
+                            totalCostArr[i] += (monthlyCost * (i+1));
                             
-                            // 修正邏輯：這裡 totalCostArr 是所有股票的加總，所以我們應該加的是「這隻股票在第 i 個月的累計成本」
-                            // 但上面的 totalCostArr 已經初始化為 0，所以我們是累加每一隻股票
-                            // 該股票第 i 個月的累計成本 = monthlyCost * (i+1)
-                            
-                            // 覆寫上方邏輯：
-                            // 正確寫法：totalCostArr[i] 已經是 0 (或其他股票的值)，我們要加上這隻股票的值
-                            // 這隻股票在第 i 個月的累計投入 = (i+1) * monthlyCost
-                            // totalCostArr[i] = totalCostArr[i] (之前股票的) + (i+1) * monthlyCost (這隻的)
-                            // 為了避免重複加，我們應該用 += 
-                            // 但上方的 fetch 邏輯是 sCost += ..., totalCostArr[i] += sCost. 是正確的。
-                            // 所以手動邏輯應該是：
-                            
-                            let currentStockCost = monthlyCost * (i + 1);
-                            totalCostArr[i] += currentStockCost;
-
                             // 2. 股數累積 (假設每月都用買入價買)
                             let sharesBought = stock.amt / mBuyPrice;
                             totalShares += sharesBought;
@@ -839,6 +829,7 @@
 
         } catch(e) {
             console.error(e);
+            alert("模擬運算發生錯誤，請檢查網絡");
         } finally {
             btn.textContent = "🚀 開始組合模擬";
             btn.disabled = false;
@@ -1213,11 +1204,20 @@
         const p = getPortfolioAnalysis();
         const codes = Object.keys(p).filter(c => p[c].qty > 0);
         if (codes.length === 0) return alert("目前沒有持倉需要更新");
+        
+        const btn = document.querySelector('.btn-success[onclick="fetchYahooPrices()"]');
+        const originalText = btn.textContent;
+        btn.textContent = "⏳ 更新中...";
+        btn.disabled = true;
+
         let updated = 0;
         for (let code of codes) {
             try {
-                const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}?interval=1d&range=1d`;
-                const res = await fetch(url);
+                // 使用 CORS Proxy
+                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${code}?interval=1d&range=1d`;
+                const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(yahooUrl);
+                
+                const res = await fetch(proxyUrl);
                 const data = await res.json();
                 const price = data.chart.result[0].meta.regularMarketPrice;
                 if(price) { priceCache[code] = price; updated++; }
@@ -1225,6 +1225,9 @@
         }
         localStorage.setItem('stock_v4_prices', JSON.stringify(priceCache));
         renderAll();
+        
+        btn.textContent = originalText;
+        btn.disabled = false;
         alert(`已更新 ${updated} 隻股票價格`);
     }
 
