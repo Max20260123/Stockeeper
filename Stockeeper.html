@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v2.2 (直連現價修復版)</title>
+    <title>Stockeeper v2.3 (模擬器增強版)</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -230,6 +230,13 @@
         .sim-manual-btn { border: 1px dashed var(--sim-primary); color: var(--sim-primary); background: transparent; padding: 4px 8px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; }
         .sim-manual-btn:hover { background: var(--sim-bg); }
 
+        /* 模擬器結果表格樣式 */
+        .sim-result-table-container { margin-top: 20px; overflow-x: auto; }
+        .sim-result-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .sim-result-table th { background: var(--sim-bg); color: var(--sim-primary); border-top: 1px solid var(--sim-border); border-bottom: 2px solid var(--sim-border); padding: 10px; }
+        .sim-result-table td { border-bottom: 1px solid #eee; padding: 10px; vertical-align: middle; }
+        .sim-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: var(--sim-primary); }
+
         /* --- 📱 移動端專屬優化 (v1.6 風格) --- */
         @media (max-width: 768px) {
             body { padding: 10px 0px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); background: #f9fafb; }
@@ -284,6 +291,10 @@
             .sim-control-panel { grid-template-columns: 1fr 1fr; }
             .sim-control-panel button { grid-column: span 2; }
             .sim-manual-box { width: 100%; flex-direction: column; align-items: stretch; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; }
+
+            /* 模擬器結果表格手機樣式 */
+            .sim-result-table th, .sim-result-table td { padding: 8px 4px; font-size: 0.8rem; white-space: nowrap; }
+            .sim-result-table td:nth-child(2) { white-space: normal; min-width: 80px; }
         }
     </style>
 </head>
@@ -301,7 +312,8 @@
         <div class="sim-control-panel">
             <div>
                 <label class="small-text">股票代號</label>
-                <input type="text" id="sim-input-code" placeholder="如 0005.HK" oninput="this.value=this.value.toUpperCase()">
+                <!-- 更新 1: Placeholder 提示 -->
+                <input type="text" id="sim-input-code" placeholder="如 0005 (自動加 .HK)" oninput="this.value=this.value.toUpperCase()">
             </div>
             <div>
                 <label class="small-text">月供金額 ($)</label>
@@ -331,6 +343,7 @@
 
         <!-- 模擬結果 -->
         <div id="sim-result-area" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--sim-border);">
+            <!-- KPI 摘要 -->
             <div class="dashboard-grid">
                 <div class="kpi-box" style="padding:10px; background:var(--sim-bg); border-color:var(--sim-border); min-height: auto;">
                     <div class="kpi-title" style="color:var(--sim-primary)">組合總投入</div>
@@ -344,9 +357,36 @@
                     <div class="kpi-title" style="color:var(--sim-primary)">估算回報</div>
                     <div class="kpi-val" id="sim-res-pct" style="font-size:1.3rem;">0%</div>
                 </div>
+                <!-- 新增：總股息顯示 -->
+                <div class="kpi-box" style="padding:10px; background:var(--sim-bg); border-color:var(--sim-border); min-height: auto;">
+                    <div class="kpi-title" style="color:var(--sim-primary)">總股息收入</div>
+                    <div class="kpi-val text-up" id="sim-res-div" style="font-size:1.3rem;">$0</div>
+                </div>
             </div>
+
+            <!-- 圖表 -->
             <div style="height: 300px; margin-top: 20px;">
                 <canvas id="simChart"></canvas>
+            </div>
+
+            <!-- 更新 2 & 3: 詳細清單與篩選 -->
+            <div class="sim-result-table-container">
+                <h4 style="color:var(--sim-primary); margin-bottom:10px;">📊 詳細表現 (勾選以計算組合)</h4>
+                <table class="sim-result-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;" class="text-center">選</th>
+                            <th class="text-left">股票</th>
+                            <th class="text-right">總投入</th>
+                            <th class="text-right">期末市值</th>
+                            <th class="text-right">總股息</th>
+                            <th class="text-right">淨回報</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sim-detail-tbody">
+                        <!-- JS 動態生成 -->
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -589,15 +629,23 @@
 
     // --- 🔮 模擬器變數 ---
     let simStocks = []; 
+    // 新增：暫存模擬計算結果，用於切換 checkbox 時重算
+    let lastSimResults = null; 
 
     renderAll();
 
     // --- 🔮 模擬器邏輯 ---
     function addSimStock() {
-        const code = document.getElementById('sim-input-code').value.toUpperCase().trim();
+        let code = document.getElementById('sim-input-code').value.toUpperCase().trim();
         const amt = parseFloat(document.getElementById('sim-input-amt').value);
         if(!code || !amt) return alert("請輸入代號及金額");
         
+        // 更新 1: 自動補全 .HK
+        // 如果是純數字或不含小數點，自動加 .HK
+        if (code.length > 0 && !code.includes('.')) {
+            code += '.HK';
+        }
+
         // 1. 新增股票
         simStocks.push({ id: Date.now(), code, amt, manualPrice: '', manualCurrent: '', manualYield: '', useManual: false });
         renderSimList();
@@ -701,12 +749,12 @@
         }
     }
 
+    // 更新 2: 重構模擬邏輯，將計算與顯示分開，並支援股息統計
     async function runMultiSimulation() {
         if(simStocks.length === 0) return alert("請先加入股票");
         
         const btn = document.querySelector('.btn-sim[onclick="runMultiSimulation()"]');
         
-        // 獲取精確的開始時間
         const startYear = parseInt(document.getElementById('sim-start-year').value);
         const startMonth = parseInt(document.getElementById('sim-start-month').value);
         const feePerStock = 50; 
@@ -715,9 +763,6 @@
         btn.disabled = true;
 
         let totalLabels = [];
-        let totalCostArr = [];
-        let totalAssetArr = [];
-        
         // 初始化時間軸
         const startDate = new Date(startYear, startMonth - 1, 1);
         const startTs = Math.floor(startDate.getTime() / 1000);
@@ -727,17 +772,22 @@
         const monthsCount = (now.getFullYear() - startYear) * 12 + (now.getMonth() - (startMonth - 1));
         
         for(let m=0; m<=monthsCount; m++) {
-            totalCostArr[m] = 0;
-            totalAssetArr[m] = 0;
-            
             let d = new Date(startYear, startMonth - 1 + m, 1);
             totalLabels[m] = `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}`;
         }
+
+        // 用來儲存每隻股票的獨立序列
+        let calculatedStocks = [];
 
         try {
             for(let stock of simStocks) {
                 let success = false;
                 
+                // 獨立的陣列，暫不加總
+                let costArr = new Array(totalLabels.length).fill(0);
+                let assetArr = new Array(totalLabels.length).fill(0);
+                let accumulatedDiv = 0; // 更新 3: 記錄單隻股票總股息
+
                 // 只有當「未強制使用手動」時才去 fetch
                 if (!stock.useManual) {
                     try {
@@ -749,8 +799,10 @@
                             const meta = result.meta;
                             const quotes = result.indicators.quote[0].close;
                             
-                            // 🚀 關鍵修正：獲取即時現價 (regularMarketPrice)
-                            // 歷史數據可能只到上個月底，這會導致現價計算錯誤。我們強制使用 meta 中的即時價。
+                            // 獲取股息事件
+                            const events = result.events ? result.events.div : {};
+
+                            // 即時現價
                             const livePrice = meta.regularMarketPrice;
 
                             if(quotes && quotes.length > 0) {
@@ -762,14 +814,28 @@
                                     
                                     for(let i=0; i < totalLabels.length; i++) {
                                         let price = null;
+                                        let timestamp = null; 
                                         
+                                        // 查找當月股息 (Yahoo 時間戳是秒)
+                                        // 簡單匹配：這個月的 timestamp 範圍內的股息
+                                        // Yahoo 回傳的 timestamp 陣列與 quotes 對應
+                                        if (result.timestamp && result.timestamp[i]) {
+                                            timestamp = result.timestamp[i];
+                                            if (events) {
+                                                // 檢查該時間點是否有股息
+                                                if (events[timestamp]) {
+                                                    let divRate = events[timestamp].amount;
+                                                    accumulatedDiv += (sShares * divRate); // 派息給當前持股
+                                                }
+                                            }
+                                        }
+
                                         // 如果是最後一個月(現在)，優先使用即時現價
                                         if (i === totalLabels.length - 1 && livePrice) {
                                             price = livePrice;
                                         } else {
                                             if (i < quotes.length) price = quotes[i];
                                             if (price === null || price === undefined) {
-                                                // 往前找最近的有效價格
                                                 for(let k=i-1; k>=0; k--) { if(quotes[k]) { price = quotes[k]; break; } }
                                             }
                                         }
@@ -779,9 +845,11 @@
                                         sCost += (stock.amt + feePerStock);
                                         sShares += (stock.amt / price);
                                         
-                                        let asset = sShares * price; 
-                                        totalCostArr[i] += sCost;
-                                        totalAssetArr[i] += asset;
+                                        // 資產價值 + 累積現金股息
+                                        let asset = (sShares * price) + accumulatedDiv; 
+                                        
+                                        costArr[i] = sCost;
+                                        assetArr[i] = asset;
                                     }
                                 }
                             }
@@ -791,37 +859,26 @@
 
                 // 如果 Fetch 失敗 或 強制手動
                 if(!success) {
-                    // 自動開啟輸入框
                     stock.useManual = true; 
                     renderSimList(); 
                     
-                    const manualBox = document.getElementById(`manual-box-${stock.id}`);
-                    if(manualBox) {
-                        const inputs = manualBox.querySelectorAll('input');
-                        inputs.forEach(inp => { if(!inp.value) inp.style.borderColor = 'red'; });
-                    }
-
                     const mBuyPrice = parseFloat(stock.manualPrice) || 0;
-                    // 如果沒有輸入現價，預設為買入價 (平手)
                     const mCurPrice = parseFloat(stock.manualCurrent) || mBuyPrice;
                     const mYield = parseFloat(stock.manualYield) || 0;
                     
                     if(mBuyPrice > 0) {
                         let totalShares = 0;
-                        let accumulatedDiv = 0;
 
                         for(let i=0; i < totalLabels.length; i++) {
                             // 1. 成本累積
                             let monthlyCost = (stock.amt + feePerStock);
-                            totalCostArr[i] += (monthlyCost * (i+1)); 
+                            costArr[i] = (monthlyCost * (i+1)); 
                             
                             // 2. 股數累積 (假設每月都用買入價買)
                             let sharesBought = stock.amt / mBuyPrice;
                             totalShares += sharesBought;
 
                             // 3. 資產價值 (價差影響)
-                            // 為了讓圖表漂亮，我們假設價格從 買入價 線性過渡到 現價
-                            // 進度：0 (開始) -> 1 (現在)
                             let progress = i / totalLabels.length;
                             let interpolatedPrice = mBuyPrice + (mCurPrice - mBuyPrice) * progress;
                             
@@ -832,44 +889,36 @@
                             accumulatedDiv += div;
 
                             // 5. 總資產
-                            totalAssetArr[i] += (marketValue + accumulatedDiv); 
+                            assetArr[i] = (marketValue + accumulatedDiv); 
                         }
                     }
                 }
+
+                // 儲存此股票的計算結果
+                calculatedStocks.push({
+                    id: stock.id,
+                    code: stock.code,
+                    dataCost: costArr,
+                    dataAsset: assetArr,
+                    totalDiv: accumulatedDiv, // 更新 3: 總股息
+                    finalCost: costArr[costArr.length-1],
+                    finalAsset: assetArr[assetArr.length-1]
+                });
             }
 
-            // 更新 UI
-            document.getElementById('sim-result-area').style.display = 'block';
-            
-            const lastIdx = totalCostArr.length - 1;
-            const finalCost = totalCostArr[lastIdx];
-            const finalVal = totalAssetArr[lastIdx];
-            const retPct = finalCost > 0 ? ((finalVal - finalCost)/finalCost*100) : 0;
+            // 將結果存入全域變數
+            lastSimResults = {
+                labels: totalLabels,
+                stocks: calculatedStocks
+            };
 
-            document.getElementById('sim-res-cost').textContent = '$' + fmtMoney(finalCost);
-            document.getElementById('sim-res-val').textContent = '$' + fmtMoney(finalVal);
-            document.getElementById('sim-res-pct').textContent = (retPct>=0?'+':'') + retPct.toFixed(2) + '%';
+            // 渲染結果面板與 Checkbox
+            renderSimResultUI();
             
-            // 繪圖
-            if(simChartInst) simChartInst.destroy();
-            simChartInst = new Chart(document.getElementById('simChart'), {
-                type: 'line',
-                data: {
-                    labels: totalLabels,
-                    datasets: [
-                        { label: '總累積本金', data: totalCostArr, borderColor: '#ccc', borderDash:[5,5], fill: false, pointRadius:0 },
-                        { label: '總資產估值', data: totalAssetArr, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, pointRadius:0 }
-                    ]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    plugins: { 
-                        datalabels: { display: false },
-                        title: { display: true, text: '組合資產增長模擬' }
-                    },
-                    interaction: { mode: 'index', intersect: false }
-                }
-            });
+            // 初次執行：預設全選並計算
+            updateSimAggregates();
+
+            document.getElementById('sim-result-area').style.display = 'block';
 
         } catch(e) {
             console.error(e);
@@ -877,6 +926,101 @@
             btn.textContent = "🚀 開始組合模擬";
             btn.disabled = false;
         }
+    }
+
+    // 新增：渲染模擬結果的表格 (含 Checkbox)
+    function renderSimResultUI() {
+        if (!lastSimResults) return;
+        const tbody = document.getElementById('sim-detail-tbody');
+        tbody.innerHTML = '';
+
+        lastSimResults.stocks.forEach((s, idx) => {
+            const netReturn = s.finalAsset - s.finalCost;
+            const netClass = netReturn >= 0 ? 'text-up' : 'text-down';
+            
+            tbody.innerHTML += `
+                <tr>
+                    <td class="text-center">
+                        <input type="checkbox" class="sim-checkbox" checked 
+                               data-idx="${idx}" onchange="updateSimAggregates()">
+                    </td>
+                    <td><b>${getStockName(s.code)}</b><br><span class="small-text">${s.code}</span></td>
+                    <td class="text-right">$${fmtMoney(s.finalCost)}</td>
+                    <td class="text-right">$${fmtMoney(s.finalAsset - s.totalDiv)}<br><span class="small-text">市值</span></td>
+                    <td class="text-right text-up">$${fmtMoney(s.totalDiv)}</td>
+                    <td class="text-right ${netClass}">
+                        ${netReturn>=0?'+':''}$${fmtMoney(netReturn)}
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    // 更新 2: 根據 Checkbox 重新計算總合並畫圖
+    function updateSimAggregates() {
+        if (!lastSimResults) return;
+
+        const checkboxes = document.querySelectorAll('.sim-checkbox');
+        const count = lastSimResults.labels.length;
+        
+        let totalCostArr = new Array(count).fill(0);
+        let totalAssetArr = new Array(count).fill(0);
+        let aggDiv = 0;
+
+        let hasChecked = false;
+
+        checkboxes.forEach(chk => {
+            if (chk.checked) {
+                hasChecked = true;
+                const idx = parseInt(chk.getAttribute('data-idx'));
+                const stockData = lastSimResults.stocks[idx];
+                
+                // 陣列相加
+                for (let i = 0; i < count; i++) {
+                    totalCostArr[i] += stockData.dataCost[i];
+                    totalAssetArr[i] += stockData.dataAsset[i];
+                }
+                aggDiv += stockData.totalDiv;
+            }
+        });
+
+        if (!hasChecked) {
+            // 如果都沒選，歸零
+            totalCostArr.fill(0);
+            totalAssetArr.fill(0);
+        }
+
+        const finalCost = totalCostArr[count-1];
+        const finalVal = totalAssetArr[count-1];
+        const retPct = finalCost > 0 ? ((finalVal - finalCost)/finalCost*100) : 0;
+
+        // 更新 KPI
+        document.getElementById('sim-res-cost').textContent = '$' + fmtMoney(finalCost);
+        document.getElementById('sim-res-val').textContent = '$' + fmtMoney(finalVal);
+        document.getElementById('sim-res-pct').textContent = (retPct>=0?'+':'') + retPct.toFixed(2) + '%';
+        // 更新 3: 顯示總股息
+        document.getElementById('sim-res-div').textContent = '$' + fmtMoney(aggDiv);
+
+        // 更新圖表
+        if(simChartInst) simChartInst.destroy();
+        simChartInst = new Chart(document.getElementById('simChart'), {
+            type: 'line',
+            data: {
+                labels: lastSimResults.labels,
+                datasets: [
+                    { label: '總累積本金', data: totalCostArr, borderColor: '#ccc', borderDash:[5,5], fill: false, pointRadius:0 },
+                    { label: '總資產估值', data: totalAssetArr, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, pointRadius:0 }
+                ]
+            },
+            options: {
+                maintainAspectRatio: false,
+                plugins: { 
+                    datalabels: { display: false },
+                    title: { display: true, text: '組合資產增長模擬 (已選項目)' }
+                },
+                interaction: { mode: 'index', intersect: false }
+            }
+        });
     }
 
     // --- 核心計算引擎 (v1.6 邏輯) ---
