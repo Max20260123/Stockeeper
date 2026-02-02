@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v3.0 (CORS代理穿透版)</title>
+    <title>Stockeeper v2.0</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -313,7 +314,7 @@
     <div class="card sim-card" style="border-left: none; border-top: 4px solid var(--sim-primary);">
         <h3 style="color: var(--sim-primary); border-color: var(--sim-border);">
             🔮 多股月供回測模擬器 
-            <span class="small-text">Yahoo 數據 + Proxy 代理</span>
+            <span class="small-text">數據由 Yahoo 提供</span>
         </h3>
         
         <div class="sim-control-panel">
@@ -636,18 +637,10 @@
 
     // --- 🔮 模擬器變數 ---
     let simStocks = []; 
+    // 新增：暫存模擬計算結果
     let lastSimResults = null; 
 
     renderAll();
-
-    // 🔥 v3.0 關鍵核心：Fetch with CORS Proxy Helper 🔥
-    async function fetchWithProxy(targetUrl) {
-        // 使用 allorigins 代理，並加入時間戳防止緩存
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&_t=${Date.now()}`;
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error('Proxy Network response was not ok');
-        return res.json();
-    }
 
     // --- 🔮 模擬器邏輯 ---
     function addSimStock() {
@@ -671,8 +664,8 @@
     async function fetchCurrentPriceForSim(stock) {
         try {
             const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?interval=1d&range=1d`;
-            // v3.0: 使用代理抓取
-            const data = await fetchWithProxy(url);
+            const res = await fetch(url);
+            const data = await res.json();
             const price = data.chart.result[0].meta.regularMarketPrice;
             
             if(price) {
@@ -686,7 +679,7 @@
                 if(tag) tag.innerHTML = `${stock.code} <small style='color:#666'>($${price})</small>`;
             }
         } catch(e) {
-            console.log("Sim price fetch fail (Proxy)", e);
+            console.log("Sim price fetch fail", e);
         }
     }
 
@@ -749,7 +742,7 @@
         }
     }
 
-    // 🔥 模擬器核心 (v3.0): 使用代理 🔥
+    // 🔥 模擬器核心重構：股息修復版 + 安全檢查 🔥
     async function runMultiSimulation() {
         if(simStocks.length === 0) return alert("請先加入股票");
         
@@ -758,7 +751,7 @@
         const startMonth = parseInt(document.getElementById('sim-start-month').value);
         const feePerStock = 50; 
         
-        btn.textContent = "⏳ 透過代理伺服器讀取中...";
+        btn.textContent = "⏳ 讀取並計算中...";
         btn.disabled = true;
 
         let totalLabels = [];
@@ -787,98 +780,106 @@
                 if (!stock.useManual) {
                     try {
                         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1d&events=div`;
-                        // v3.0: 使用代理抓取
-                        const data = await fetchWithProxy(url);
-                        
-                        const result = data.chart.result[0];
-                        const meta = result.meta;
-                        const quoteData = result.indicators.quote[0];
-                        const quotes = quoteData ? quoteData.close : [];
-                        const timestamps = result.timestamp || [];
-                        
-                        let rawEvents = {};
-                        if (result.events && result.events.div) {
-                            rawEvents = result.events.div;
-                        }
-                        
-                        let monthMap = {};
-                        totalLabels.forEach(label => {
-                            monthMap[label] = { priceSum: 0, count: 0, div: 0, lastPrice: 0 };
-                        });
-
-                        for(let i=0; i < timestamps.length; i++) {
-                            const t = timestamps[i];
-                            const price = quotes[i];
-                            if(price === null || price === undefined) continue;
-
-                            const dateObj = new Date(t * 1000);
-                            const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
-                            if (monthMap[key]) {
-                                monthMap[key].priceSum += price;
-                                monthMap[key].count += 1;
-                                monthMap[key].lastPrice = price;
+                        const res = await fetch(url);
+                        if(res.ok) {
+                            const data = await res.json();
+                            const result = data.chart.result[0];
+                            const meta = result.meta;
+                            // 安全檢查 1: 確保 quote 存在
+                            const quoteData = result.indicators.quote[0];
+                            const quotes = quoteData ? quoteData.close : [];
+                            const timestamps = result.timestamp || [];
+                            
+                            // 安全檢查 2: 確保 events 存在
+                            // Yahoo 有時返回 null events，或有 events 但沒有 div
+                            let rawEvents = {};
+                            if (result.events && result.events.div) {
+                                rawEvents = result.events.div;
                             }
-                        }
+                            
+                            // 建立資料桶 Map
+                            let monthMap = {};
+                            totalLabels.forEach(label => {
+                                monthMap[label] = { priceSum: 0, count: 0, div: 0, lastPrice: 0 };
+                            });
 
-                        Object.keys(rawEvents).forEach(ts => {
-                            const divData = rawEvents[ts];
-                            const dateObj = new Date(ts * 1000);
-                            const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
-                            if (monthMap[key]) {
-                                monthMap[key].div += divData.amount;
+                            // 1. 填入股價
+                            for(let i=0; i < timestamps.length; i++) {
+                                const t = timestamps[i];
+                                const price = quotes[i];
+                                if(price === null || price === undefined) continue;
+
+                                const dateObj = new Date(t * 1000);
+                                const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
+                                if (monthMap[key]) {
+                                    monthMap[key].priceSum += price;
+                                    monthMap[key].count += 1;
+                                    monthMap[key].lastPrice = price;
+                                }
                             }
-                        });
 
-                        if (quotes.length > 0) {
-                            success = true;
-                            let sShares = 0;
-                            let sCost = 0;
-                            const livePrice = meta.regularMarketPrice;
+                            // 2. 填入股息
+                            Object.keys(rawEvents).forEach(ts => {
+                                const divData = rawEvents[ts];
+                                const dateObj = new Date(ts * 1000);
+                                const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
+                                if (monthMap[key]) {
+                                    monthMap[key].div += divData.amount;
+                                }
+                            });
 
-                            for(let i=0; i < totalLabels.length; i++) {
-                                const key = totalLabels[i];
-                                const mData = monthMap[key];
-                                
-                                let monthlyPrice = 0;
-                                if (i === totalLabels.length - 1 && livePrice) {
-                                    monthlyPrice = livePrice;
-                                } else if (mData && mData.count > 0) {
-                                    monthlyPrice = mData.priceSum / mData.count; 
-                                } else {
-                                    for(let k=i-1; k>=0; k--) {
-                                        if(monthMap[totalLabels[k]].count > 0) {
-                                            monthlyPrice = monthMap[totalLabels[k]].lastPrice;
-                                            break;
+                            // 3. 模擬計算
+                            if (quotes.length > 0) {
+                                success = true;
+                                let sShares = 0;
+                                let sCost = 0;
+                                const livePrice = meta.regularMarketPrice;
+
+                                for(let i=0; i < totalLabels.length; i++) {
+                                    const key = totalLabels[i];
+                                    const mData = monthMap[key];
+                                    
+                                    let monthlyPrice = 0;
+                                    if (i === totalLabels.length - 1 && livePrice) {
+                                        monthlyPrice = livePrice;
+                                    } else if (mData && mData.count > 0) {
+                                        monthlyPrice = mData.priceSum / mData.count; 
+                                    } else {
+                                        for(let k=i-1; k>=0; k--) {
+                                            if(monthMap[totalLabels[k]].count > 0) {
+                                                monthlyPrice = monthMap[totalLabels[k]].lastPrice;
+                                                break;
+                                            }
                                         }
+                                        if(monthlyPrice === 0 && livePrice) monthlyPrice = livePrice;
                                     }
-                                    if(monthlyPrice === 0 && livePrice) monthlyPrice = livePrice;
+
+                                    let sharesBought = 0;
+                                    if (monthlyPrice > 0) {
+                                        sCost += (stock.amt + feePerStock);
+                                        sharesBought = (stock.amt / monthlyPrice);
+                                        sShares += sharesBought;
+                                    }
+
+                                    let monthlyDivRec = 0;
+                                    if (mData && mData.div > 0) {
+                                        monthlyDivRec = (sShares * mData.div);
+                                        accumulatedDiv += monthlyDivRec;
+                                    }
+
+                                    let currentPrice = monthlyPrice > 0 ? monthlyPrice : (mData ? mData.lastPrice : 0);
+                                    let asset = (sShares * currentPrice) + accumulatedDiv;
+                                    costArr[i] = sCost;
+                                    assetArr[i] = asset;
+
+                                    monthlyDetails.push({
+                                        month: key,
+                                        price: monthlyPrice,
+                                        sharesBought: sharesBought,
+                                        sharesTotal: sShares,
+                                        divReceived: monthlyDivRec
+                                    });
                                 }
-
-                                let sharesBought = 0;
-                                if (monthlyPrice > 0) {
-                                    sCost += (stock.amt + feePerStock);
-                                    sharesBought = (stock.amt / monthlyPrice);
-                                    sShares += sharesBought;
-                                }
-
-                                let monthlyDivRec = 0;
-                                if (mData && mData.div > 0) {
-                                    monthlyDivRec = (sShares * mData.div);
-                                    accumulatedDiv += monthlyDivRec;
-                                }
-
-                                let currentPrice = monthlyPrice > 0 ? monthlyPrice : (mData ? mData.lastPrice : 0);
-                                let asset = (sShares * currentPrice) + accumulatedDiv;
-                                costArr[i] = sCost;
-                                assetArr[i] = asset;
-
-                                monthlyDetails.push({
-                                    month: key,
-                                    price: monthlyPrice,
-                                    sharesBought: sharesBought,
-                                    sharesTotal: sShares,
-                                    divReceived: monthlyDivRec
-                                });
                             }
                         }
                     } catch(e) { console.log(stock.code + " fetch failed", e); }
@@ -1482,8 +1483,8 @@
         for (let code of codes) {
             try {
                 const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${code}?interval=1d&range=1d`;
-                // v3.0: 使用代理抓取
-                const data = await fetchWithProxy(yahooUrl);
+                const res = await fetch(yahooUrl);
+                const data = await res.json();
                 const price = data.chart.result[0].meta.regularMarketPrice;
                 if(price) { priceCache[code] = price; updated++; }
             } catch(e) { console.error(code, e); }
