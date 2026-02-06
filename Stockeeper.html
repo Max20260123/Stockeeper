@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stockeeper v2.0</title>
+    <title>Stockeeper v2.1</title>
     <!-- Chart.js 核心 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js 數據標籤插件 -->
@@ -378,7 +377,7 @@
             <!-- 詳細清單與篩選 -->
             <div class="sim-result-table-container">
                 <h4 style="color:var(--sim-primary); margin-bottom:10px;">📊 詳細表現 (點擊標題排序)</h4>
-                <div class="small-text" style="margin-bottom:10px;">點擊股票行可展開每月明細</div>
+                <div class="small-text" style="margin-bottom:10px;">點擊股票行可展開 <b>年度總覽</b> 及 <b>每月明細</b></div>
                 <table class="sim-result-table">
                     <thead>
                         <tr>
@@ -388,6 +387,7 @@
                             <th class="text-right" onclick="sortSimResult('value')">期末市值 <span class="sort-icon"></span></th>
                             <th class="text-right" onclick="sortSimResult('div')">總股息 <span class="sort-icon"></span></th>
                             <th class="text-right" onclick="sortSimResult('net')">淨回報 <span class="sort-icon"></span></th>
+                            <th style="width: 50px;" class="text-center">操作</th>
                         </tr>
                     </thead>
                     <tbody id="sim-detail-tbody">
@@ -742,7 +742,7 @@
         }
     }
 
-    // 🔥 模擬器核心重構：股息修復版 + 安全檢查 🔥
+    // 🔥 模擬器核心修正：強化股息抓取與邏輯對齊 🔥
     async function runMultiSimulation() {
         if(simStocks.length === 0) return alert("請先加入股票");
         
@@ -757,6 +757,8 @@
         let totalLabels = [];
         const startDate = new Date(startYear, startMonth - 1, 1);
         const startTs = Math.floor(startDate.getTime() / 1000);
+        // 往前緩衝 7 天，避免因為時區問題漏掉月初 (1號) 的派息
+        const safeStartTs = startTs - (7 * 86400);
         const endTs = Math.floor(Date.now() / 1000);
         
         const now = new Date();
@@ -779,7 +781,7 @@
 
                 if (!stock.useManual) {
                     try {
-                        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${startTs}&period2=${endTs}&interval=1d&events=div`;
+                        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${stock.code}?period1=${safeStartTs}&period2=${endTs}&interval=1d&events=div`;
                         const res = await fetch(url);
                         if(res.ok) {
                             const data = await res.json();
@@ -790,11 +792,11 @@
                             const quotes = quoteData ? quoteData.close : [];
                             const timestamps = result.timestamp || [];
                             
-                            // 安全檢查 2: 確保 events 存在
-                            // Yahoo 有時返回 null events，或有 events 但沒有 div
-                            let rawEvents = {};
-                            if (result.events && result.events.div) {
-                                rawEvents = result.events.div;
+                            // 安全檢查 2: 強化股息抓取 (兼容不同 Yahoo 結構)
+                            let rawDivs = {};
+                            if (result.events) {
+                                if (result.events.div) Object.assign(rawDivs, result.events.div);
+                                else if (result.events.dividends) Object.assign(rawDivs, result.events.dividends); // 有時 Yahoo 會用全名
                             }
                             
                             // 建立資料桶 Map
@@ -819,10 +821,11 @@
                             }
 
                             // 2. 填入股息
-                            Object.keys(rawEvents).forEach(ts => {
-                                const divData = rawEvents[ts];
+                            Object.keys(rawDivs).forEach(ts => {
+                                const divData = rawDivs[ts];
                                 const dateObj = new Date(ts * 1000);
                                 const key = `${dateObj.getFullYear()}-${(dateObj.getMonth()+1).toString().padStart(2,'0')}`;
+                                // 只有在「供股月份範圍內」的股息才計算 (Map 有 key 才算)
                                 if (monthMap[key]) {
                                     monthMap[key].div += divData.amount;
                                 }
@@ -839,12 +842,14 @@
                                     const key = totalLabels[i];
                                     const mData = monthMap[key];
                                     
+                                    // A. 決定當月買入價
                                     let monthlyPrice = 0;
                                     if (i === totalLabels.length - 1 && livePrice) {
                                         monthlyPrice = livePrice;
                                     } else if (mData && mData.count > 0) {
                                         monthlyPrice = mData.priceSum / mData.count; 
                                     } else {
+                                        // 若當月無交易 (停牌/假期)，找上個月收盤
                                         for(let k=i-1; k>=0; k--) {
                                             if(monthMap[totalLabels[k]].count > 0) {
                                                 monthlyPrice = monthMap[totalLabels[k]].lastPrice;
@@ -854,15 +859,20 @@
                                         if(monthlyPrice === 0 && livePrice) monthlyPrice = livePrice;
                                     }
 
+                                    // B. 執行月供買入 (先買入，累積股數)
                                     let sharesBought = 0;
+                                    let monthlyCost = 0;
                                     if (monthlyPrice > 0) {
-                                        sCost += (stock.amt + feePerStock);
+                                        monthlyCost = (stock.amt + feePerStock);
+                                        sCost += monthlyCost;
                                         sharesBought = (stock.amt / monthlyPrice);
-                                        sShares += sharesBought;
+                                        sShares += sharesBought; // 核心：當月買入後，立即計入總股數
                                     }
 
+                                    // C. 計算股息收入 (用最新的總股數 x 派息金額)
                                     let monthlyDivRec = 0;
                                     if (mData && mData.div > 0) {
+                                        // 邏輯：(累積到該月份的總股票數量) x (該次派多少息)
                                         monthlyDivRec = (sShares * mData.div);
                                         accumulatedDiv += monthlyDivRec;
                                     }
@@ -877,7 +887,8 @@
                                         price: monthlyPrice,
                                         sharesBought: sharesBought,
                                         sharesTotal: sShares,
-                                        divReceived: monthlyDivRec
+                                        divReceived: monthlyDivRec,
+                                        cost: monthlyCost // 新增：每月成本
                                     });
                                 }
                             }
@@ -885,6 +896,7 @@
                     } catch(e) { console.log(stock.code + " fetch failed", e); }
                 }
 
+                // 失敗或手動模式
                 if(!success) {
                     stock.useManual = true; 
                     renderSimList(); 
@@ -895,6 +907,8 @@
                     
                     if(mBuyPrice > 0) {
                         let totalShares = 0;
+                        accumulatedDiv = 0; // 重置
+                        
                         for(let i=0; i < totalLabels.length; i++) {
                             let monthlyCost = (stock.amt + feePerStock);
                             costArr[i] = (monthlyCost * (i+1)); 
@@ -915,7 +929,8 @@
                                 price: interpolatedPrice,
                                 sharesBought: sharesBought,
                                 sharesTotal: totalShares,
-                                divReceived: div
+                                divReceived: div,
+                                cost: monthlyCost // 新增：每月成本
                             });
                         }
                     }
@@ -944,6 +959,7 @@
 
         } catch(e) {
             console.error(e);
+            alert("模擬發生錯誤，請稍後再試。");
         } finally {
             btn.textContent = "🚀 開始組合模擬";
             btn.disabled = false;
@@ -966,6 +982,22 @@
         const row = document.getElementById(`sim-detail-row-${idx}`);
         if (row) {
             row.classList.toggle('expanded');
+        }
+    }
+
+    // 🔥 新增：刪除個別模擬結果 🔥
+    function deleteSimResultItem(simId) {
+        if(!confirm("確定要移除此股票的模擬結果嗎？")) return;
+        
+        // 從結果中移除
+        if(lastSimResults && lastSimResults.stocks) {
+            lastSimResults.stocks = lastSimResults.stocks.filter(s => s.id !== simId);
+            renderSimResultUI();
+            updateSimAggregates();
+            
+            // 選項：是否連同輸入列表也移除？(為了使用者體驗，通常預期刪除結果也要移除輸入，避免按一下又跑出來)
+            // 這裡也同步移除輸入列表的項目
+            removeSimStock(simId);
         }
     }
 
@@ -1002,14 +1034,53 @@
             const netClass = netReturn >= 0 ? 'text-up' : 'text-down';
             const idx = s.originalIndex; 
 
-            let detailsHtml = [...s.details].reverse().map(d => `
-                <tr>
+            // 生成年度總覽資料
+            let annualMap = {};
+            s.details.forEach(d => {
+                let y = d.month.split('-')[0];
+                if(!annualMap[y]) annualMap[y] = { year: y, cost: 0, shares: 0, div: 0, lastPrice: 0 };
+                annualMap[y].cost += (d.cost || 0);
+                annualMap[y].shares += d.sharesBought;
+                annualMap[y].div += d.divReceived;
+                annualMap[y].lastPrice = d.price; // 迴圈按月份順序，最後一次更新即為年末價格
+            });
+
+            // 生成年度總覽 HTML
+            let annualHtml = `<div style="margin-bottom:15px;"><h5 style="margin:0 0 5px 0; color:#8b5cf6;">📅 年度總覽</h5>
+            <table class="sim-detail-inner-table" style="background:#fffbe6; border-color:#ffe58f;">
+                <thead><tr style="background:#faad14; color:white;">
+                    <th style="color:white; background:#faad14;">年份</th>
+                    <th style="color:white; background:#faad14;">本年投入</th>
+                    <th style="color:white; background:#faad14;">累積股數 (年增)</th>
+                    <th style="color:white; background:#faad14;">年收股息</th>
+                    <th style="color:white; background:#faad14;">年末參考價</th>
+                </tr></thead><tbody>`;
+            
+            Object.values(annualMap).forEach(y => {
+                annualHtml += `<tr>
+                    <td><b>${y.year}</b></td>
+                    <td>$${fmtMoney(y.cost)}</td>
+                    <td>+${y.shares.toFixed(2)}</td>
+                    <td class="text-up"><b>$${fmtMoney(y.div)}</b></td>
+                    <td>$${y.lastPrice.toFixed(2)}</td>
+                </tr>`;
+            });
+            annualHtml += `</tbody></table></div>`;
+
+            // 生成每月明細 HTML
+            let detailsHtml = `<h5 style="margin:0 0 5px 0; color:#6b7280;">📅 每月明細</h5>
+            <table class="sim-detail-inner-table">
+                <thead><tr><th>月份</th><th>平均買入價</th><th>買入股數</th><th>收到股息</th></tr></thead><tbody>`;
+            
+            [...s.details].reverse().forEach(d => {
+                detailsHtml += `<tr>
                     <td>${d.month}</td>
                     <td>$${d.price.toFixed(2)}</td>
                     <td>${d.sharesBought.toFixed(2)}</td>
-                    <td class="${d.divReceived>0?'text-up':''}">${d.divReceived>0 ? '$'+d.divReceived.toFixed(2) : '-'}</td>
-                </tr>
-            `).join('');
+                    <td class="${d.divReceived>0?'text-up':''}">${d.divReceived>0 ? '<b>$'+d.divReceived.toFixed(2)+'</b>' : '-'}</td>
+                </tr>`;
+            });
+            detailsHtml += `</tbody></table>`;
 
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="toggleSimDetail(${idx})">
@@ -1024,20 +1095,14 @@
                     <td class="text-right ${netClass}">
                         ${netReturn>=0?'+':''}$${fmtMoney(netReturn)}
                     </td>
+                    <td class="text-center" onclick="event.stopPropagation()">
+                        <button class="btn btn-sm btn-danger" style="padding:4px 8px;" onclick="deleteSimResultItem(${s.id})">🗑️</button>
+                    </td>
                 </tr>
                 <tr id="sim-detail-row-${idx}" class="sim-detail-row">
-                    <td colspan="6" style="padding:0;">
-                        <table class="sim-detail-inner-table">
-                            <thead>
-                                <tr>
-                                    <th>月份</th>
-                                    <th>平均買入價</th>
-                                    <th>買入股數</th>
-                                    <th>收到股息</th>
-                                </tr>
-                            </thead>
-                            <tbody>${detailsHtml}</tbody>
-                        </table>
+                    <td colspan="7" style="padding:15px;">
+                        ${annualHtml}
+                        ${detailsHtml}
                     </td>
                 </tr>
             `;
@@ -1060,13 +1125,15 @@
             if (chk.checked) {
                 hasChecked = true;
                 const idx = parseInt(chk.getAttribute('data-idx'));
-                const stockData = lastSimResults.stocks[idx]; 
-                
-                for (let i = 0; i < count; i++) {
-                    totalCostArr[i] += stockData.dataCost[i];
-                    totalAssetArr[i] += stockData.dataAsset[i];
+                // 安全檢查：確保索引有效 (因為刪除操作可能改變陣列長度，雖然我們重繪了但以防萬一)
+                if (lastSimResults.stocks[idx]) {
+                    const stockData = lastSimResults.stocks[idx]; 
+                    for (let i = 0; i < count; i++) {
+                        totalCostArr[i] += stockData.dataCost[i];
+                        totalAssetArr[i] += stockData.dataAsset[i];
+                    }
+                    aggDiv += stockData.totalDiv;
                 }
-                aggDiv += stockData.totalDiv;
             }
         });
 
@@ -1589,4 +1656,3 @@
 </script>
 </body>
 </html>
-
